@@ -299,6 +299,105 @@ static bool parse_u64_dec(const char *str, uint64_t *out_val)
     return true;
 }
 
+static bool parse_u32_dec(const char *str, uint32_t *out_val)
+{
+    uint64_t tmp = 0ULL;
+
+    if (!parse_u64_dec(str, &tmp) || tmp > 0xFFFFFFFFULL) {
+        return false;
+    }
+    *out_val = (uint32_t)tmp;
+    return true;
+}
+
+static bool parse_i32_dec(const char *str, int32_t *out_val)
+{
+    bool neg = false;
+    uint64_t mag = 0ULL;
+    uint64_t limit = 0x7FFFFFFFULL;
+
+    if (str == NULL || out_val == NULL || *str == '\0') {
+        return false;
+    }
+    if (*str == '-') {
+        neg = true;
+        limit = 0x80000000ULL;
+        str++;
+    }
+    if (!parse_u64_dec(str, &mag) || mag > limit) {
+        return false;
+    }
+    if (neg) {
+        if (mag == 0x80000000ULL) {
+            *out_val = (-2147483647L - 1L);
+        } else {
+            *out_val = -(int32_t)mag;
+        }
+    } else {
+        *out_val = (int32_t)mag;
+    }
+    return true;
+}
+
+static bool parse_u32_hex(const char *str, size_t expected_digits, uint32_t *out_val)
+{
+    uint32_t val = 0UL;
+    size_t count = 0U;
+
+    if (str == NULL || out_val == NULL || *str == '\0') {
+        return false;
+    }
+    while (*str != '\0') {
+        uint32_t nibble;
+        char c = *str;
+        if (c >= '0' && c <= '9') {
+            nibble = (uint32_t)(c - '0');
+        } else if (c >= 'A' && c <= 'F') {
+            nibble = (uint32_t)(10 + (c - 'A'));
+        } else if (c >= 'a' && c <= 'f') {
+            nibble = (uint32_t)(10 + (c - 'a'));
+        } else {
+            return false;
+        }
+        if (count >= 8U) {
+            return false;
+        }
+        val = (val << 4) | nibble;
+        count++;
+        str++;
+    }
+    if (expected_digits != 0U && count != expected_digits) {
+        return false;
+    }
+    *out_val = val;
+    return true;
+}
+
+static bool join_mount_filename(const char *mount_point,
+                                const char *filename,
+                                char *out_path,
+                                size_t out_size)
+{
+    size_t mount_len;
+    size_t file_len;
+    size_t needed;
+
+    if (mount_point == NULL || filename == NULL || out_path == NULL) {
+        return false;
+    }
+    mount_len = strlen(mount_point);
+    file_len = strlen(filename);
+    needed = mount_len + 1U + file_len + 1U;
+    if (out_size < needed) {
+        return false;
+    }
+    memcpy(out_path, mount_point, mount_len);
+    out_path[mount_len] = '/';
+    memcpy(out_path + mount_len + 1U, filename, file_len);
+    out_path[needed - 1U] = '\0';
+    return true;
+}
+
 static bool append_str(char *dst, size_t dst_size, size_t *io_pos, const char *src)
 {
     size_t len;
@@ -605,6 +704,71 @@ bool bb_storage_is_completed_event_filename(const char *filename)
  * CSV Serialization
  * ========================================================================= */
 
+static const char CSV_COLUMNS_HEADER[] =
+    "sample_idx,timestamp_us,offset_ms,sensor,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_mdps";
+
+static int format_event_header_text(const bb_event_record_t *event, char *buf, size_t buf_size)
+{
+    char ts_buf[24];
+
+    format_u64_dec(event->trigger_timestamp_us, ts_buf, sizeof(ts_buf));
+    return snprintf(buf,
+                    buf_size,
+                    "# BLACKBOX_EVENT_FORMAT,v%u\n"
+                    "# event_id,%lu\n"
+                    "# trigger_timestamp_us,%s\n"
+                    "# sample_rate_hz,%u\n"
+                    "# flags,0x%08lX\n"
+                    "# pre_event_samples,%lu\n"
+                    "# post_event_samples,%lu\n"
+                    "# sample_count,%lu\n"
+                    "%s\n",
+                    (unsigned)event->format_version,
+                    (unsigned long)event->event_id,
+                    ts_buf,
+                    (unsigned)event->sample_rate_hz,
+                    (unsigned long)event->flags,
+                    (unsigned long)event->pre_event_samples,
+                    (unsigned long)event->post_event_samples,
+                    (unsigned long)event->sample_count,
+                    CSV_COLUMNS_HEADER);
+}
+
+static int format_sample_row_text(size_t idx,
+                                  const bb_storage_sample_t *s,
+                                  char *buf,
+                                  size_t buf_size)
+{
+    char ts_buf[24];
+
+    format_u64_dec(s->timestamp_us, ts_buf, sizeof(ts_buf));
+    return snprintf(buf,
+                    buf_size,
+                    "%lu,%s,%ld,%u,%ld,%ld,%ld,%ld,%ld,%ld\n",
+                    (unsigned long)idx,
+                    ts_buf,
+                    (long)s->offset_ms,
+                    (unsigned)s->sensor_id,
+                    (long)s->accel_x_mg,
+                    (long)s->accel_y_mg,
+                    (long)s->accel_z_mg,
+                    (long)s->gyro_x_mdps,
+                    (long)s->gyro_y_mdps,
+                    (long)s->gyro_z_mdps);
+}
+
+static int format_event_footer_text(size_t sample_count,
+                                    uint32_t crc,
+                                    char *buf,
+                                    size_t buf_size)
+{
+    return snprintf(buf,
+                    buf_size,
+                    "# END_EVENT,count=%lu,crc32=0x%08lX\n",
+                    (unsigned long)sample_count,
+                    (unsigned long)crc);
+}
+
 esp_err_t bb_storage_format_event_csv(const bb_event_record_t *event,
                                       char *out_buf,
                                       size_t buf_size,
@@ -614,8 +778,12 @@ esp_err_t bb_storage_format_event_csv(const bb_event_record_t *event,
     size_t pos = 0U;
     size_t i;
     uint32_t crc;
+    int rc;
     char line[384];
-    char ts_buf[24];
+
+    if (out_len != NULL) {
+        *out_len = 0U;
+    }
 
     err = bb_storage_validate_event(event);
     if (err != ESP_OK) {
@@ -626,54 +794,29 @@ esp_err_t bb_storage_format_event_csv(const bb_event_record_t *event,
     }
     out_buf[0] = '\0';
 
-    format_u64_dec(event->trigger_timestamp_us, ts_buf, sizeof(ts_buf));
-    sprintf(line,
-            "# BLACKBOX_EVENT_FORMAT,v%u\n"
-            "# event_id,%lu\n"
-            "# trigger_timestamp_us,%s\n"
-            "# sample_rate_hz,%u\n"
-            "# flags,0x%08lX\n"
-            "# pre_event_samples,%lu\n"
-            "# post_event_samples,%lu\n"
-            "# sample_count,%lu\n"
-            "sample_idx,timestamp_us,offset_ms,sensor,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_mdps\n",
-            (unsigned)event->format_version,
-            (unsigned long)event->event_id,
-            ts_buf,
-            (unsigned)event->sample_rate_hz,
-            (unsigned long)event->flags,
-            (unsigned long)event->pre_event_samples,
-            (unsigned long)event->post_event_samples,
-            (unsigned long)event->sample_count);
-
+    rc = format_event_header_text(event, line, sizeof(line));
+    if (rc <= 0 || (size_t)rc >= sizeof(line)) {
+        return ESP_FAIL;
+    }
     if (!append_str(out_buf, buf_size, &pos, line)) {
         return ESP_ERR_INVALID_SIZE;
     }
 
     for (i = 0U; i < event->sample_count; i++) {
-        const bb_storage_sample_t *s = &event->samples[i];
-        format_u64_dec(s->timestamp_us, ts_buf, sizeof(ts_buf));
-        sprintf(line,
-                "%lu,%s,%ld,%u,%ld,%ld,%ld,%ld,%ld,%ld\n",
-                (unsigned long)i,
-                ts_buf,
-                (long)s->offset_ms,
-                (unsigned)s->sensor_id,
-                (long)s->accel_x_mg,
-                (long)s->accel_y_mg,
-                (long)s->accel_z_mg,
-                (long)s->gyro_x_mdps,
-                (long)s->gyro_y_mdps,
-                (long)s->gyro_z_mdps);
+        rc = format_sample_row_text(i, &event->samples[i], line, sizeof(line));
+        if (rc <= 0 || (size_t)rc >= sizeof(line)) {
+            return ESP_FAIL;
+        }
         if (!append_str(out_buf, buf_size, &pos, line)) {
             return ESP_ERR_INVALID_SIZE;
         }
     }
 
     crc = bb_storage_compute_samples_crc32(event->samples, event->sample_count);
-    sprintf(line, "# END_EVENT,count=%lu,crc32=0x%08lX\n",
-            (unsigned long)event->sample_count,
-            (unsigned long)crc);
+    rc = format_event_footer_text(event->sample_count, crc, line, sizeof(line));
+    if (rc <= 0 || (size_t)rc >= sizeof(line)) {
+        return ESP_FAIL;
+    }
     if (!append_str(out_buf, buf_size, &pos, line)) {
         return ESP_ERR_INVALID_SIZE;
     }
@@ -967,12 +1110,231 @@ esp_err_t bb_storage_get_stats(bb_storage_stats_t *out_stats)
 
 static bool file_exists(const char *path)
 {
-    FILE *fp = fopen(path, "rb");
-    if (fp != NULL) {
-        fclose(fp);
-        return true;
+#if defined(BB_STORAGE_HOST_TEST) && defined(_WIN32)
+    return (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES);
+#else
+    struct stat st;
+    return (stat(path, &st) == 0);
+#endif
+}
+
+static esp_err_t map_errno_to_err(int saved_errno)
+{
+    return (saved_errno == ENOSPC) ? ESP_ERR_NO_MEM : ESP_FAIL;
+}
+
+static esp_err_t write_event_to_paths_locked(const bb_event_record_t *event,
+                                             const char *tmp_path,
+                                             const char *final_path,
+                                             bool update_stats,
+                                             size_t *out_bytes_written)
+{
+    esp_err_t err = ESP_FAIL;
+    FILE *fp = NULL;
+    size_t i;
+    size_t bytes_written = 0U;
+    int rc;
+    int saved_errno = 0;
+    uint32_t crc;
+    char line[384];
+
+    if (out_bytes_written != NULL) {
+        *out_bytes_written = 0U;
     }
-    return false;
+
+    /* Refuse to overwrite an existing completed event recording */
+    if (file_exists(final_path)) {
+        BB_LOGW("Finalized event file already exists: %s", final_path);
+        if (update_stats) {
+            s_ctx.stats.last_error = ESP_ERR_INVALID_STATE;
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Clean up any stale temporary file from a previously interrupted write */
+    (void)remove(tmp_path);
+
+#ifdef BB_STORAGE_HOST_TEST
+    if (s_test_faults.fail_fopen) {
+        BB_LOGE("Simulated fopen failure on %s", tmp_path);
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+#endif
+
+    errno = 0;
+    fp = fopen(tmp_path, "wb");
+    if (fp == NULL) {
+        saved_errno = errno;
+        BB_LOGE("Failed to open temporary file %s (errno=%d)", tmp_path, saved_errno);
+        err = map_errno_to_err(saved_errno);
+        goto cleanup_error;
+    }
+
+#ifdef BB_STORAGE_HOST_TEST
+    if (s_test_faults.fail_header_write) {
+        errno = EIO;
+        saved_errno = EIO;
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+#endif
+
+    rc = format_event_header_text(event, line, sizeof(line));
+    if (rc <= 0 || (size_t)rc >= sizeof(line)) {
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+    errno = 0;
+    if (fputs(line, fp) == EOF || ferror(fp)) {
+        saved_errno = errno;
+        err = map_errno_to_err(saved_errno);
+        goto cleanup_error;
+    }
+    bytes_written += (size_t)rc;
+
+    for (i = 0U; i < event->sample_count; i++) {
+#ifdef BB_STORAGE_HOST_TEST
+        if (i >= s_test_faults.fail_after_samples) {
+            if (s_test_faults.fail_write_enospc) {
+                errno = ENOSPC;
+                err = ESP_ERR_NO_MEM;
+                goto cleanup_error;
+            }
+            if (s_test_faults.fail_write_io) {
+                errno = EIO;
+                err = ESP_FAIL;
+                goto cleanup_error;
+            }
+        }
+#endif
+
+        rc = format_sample_row_text(i, &event->samples[i], line, sizeof(line));
+        if (rc <= 0 || (size_t)rc >= sizeof(line)) {
+            err = ESP_FAIL;
+            goto cleanup_error;
+        }
+        errno = 0;
+        if (fputs(line, fp) == EOF || ferror(fp)) {
+            saved_errno = errno;
+            err = map_errno_to_err(saved_errno);
+            goto cleanup_error;
+        }
+        bytes_written += (size_t)rc;
+    }
+
+#ifdef BB_STORAGE_HOST_TEST
+    if (s_test_faults.fail_footer_write) {
+        errno = EIO;
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+#endif
+
+    crc = bb_storage_compute_samples_crc32(event->samples, event->sample_count);
+    rc = format_event_footer_text(event->sample_count, crc, line, sizeof(line));
+    if (rc <= 0 || (size_t)rc >= sizeof(line)) {
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+    errno = 0;
+    if (fputs(line, fp) == EOF || ferror(fp)) {
+        saved_errno = errno;
+        err = map_errno_to_err(saved_errno);
+        goto cleanup_error;
+    }
+    bytes_written += (size_t)rc;
+
+#ifdef BB_STORAGE_HOST_TEST
+    if (s_test_faults.fail_fflush) {
+        errno = EIO;
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+#endif
+
+    errno = 0;
+    if (fflush(fp) != 0) {
+        saved_errno = errno;
+        BB_LOGE("fflush failed on %s (errno=%d)", tmp_path, saved_errno);
+        err = map_errno_to_err(saved_errno);
+        goto cleanup_error;
+    }
+
+#ifndef BB_STORAGE_HOST_TEST
+    errno = 0;
+    if (fsync(fileno(fp)) != 0) {
+        saved_errno = errno;
+        BB_LOGE("fsync failed on %s (errno=%d)", tmp_path, saved_errno);
+        err = map_errno_to_err(saved_errno);
+        goto cleanup_error;
+    }
+#else
+    if (s_test_faults.fail_fsync) {
+        errno = EIO;
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+#endif
+
+    errno = 0;
+    if (fclose(fp) != 0) {
+        saved_errno = errno;
+        fp = NULL;
+        BB_LOGE("fclose failed on %s (errno=%d)", tmp_path, saved_errno);
+        err = map_errno_to_err(saved_errno);
+        goto cleanup_error;
+    }
+    fp = NULL;
+
+#ifdef BB_STORAGE_HOST_TEST
+    if (s_test_faults.fail_fclose) {
+        errno = EIO;
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+    if (s_test_faults.fail_rename_enospc) {
+        errno = ENOSPC;
+        err = ESP_ERR_NO_MEM;
+        goto cleanup_error;
+    }
+    if (s_test_faults.fail_rename) {
+        err = ESP_FAIL;
+        goto cleanup_error;
+    }
+#endif
+
+    errno = 0;
+    if (rename(tmp_path, final_path) != 0) {
+        saved_errno = errno;
+        BB_LOGE("Failed to finalize %s -> %s (errno=%d)", tmp_path, final_path, saved_errno);
+        err = map_errno_to_err(saved_errno);
+        goto cleanup_error;
+    }
+
+    if (update_stats) {
+        s_ctx.stats.events_written++;
+        s_ctx.stats.last_event_id = event->event_id;
+        s_ctx.stats.last_write_bytes = bytes_written;
+        s_ctx.stats.last_error = ESP_OK;
+        bb_set_status(BB_STORAGE_STATUS_READY);
+    }
+    if (out_bytes_written != NULL) {
+        *out_bytes_written = bytes_written;
+    }
+    return ESP_OK;
+
+cleanup_error:
+    if (fp != NULL) {
+        (void)fclose(fp);
+    }
+    (void)remove(tmp_path);
+    if (update_stats) {
+        s_ctx.stats.write_failures++;
+        s_ctx.stats.last_error = err;
+        bb_set_status((err == ESP_ERR_NO_MEM) ? BB_STORAGE_STATUS_FULL : BB_STORAGE_STATUS_WRITE_ERROR);
+    }
+    return err;
 }
 
 esp_err_t bb_storage_write_event(const bb_event_record_t *event,
@@ -982,19 +1344,17 @@ esp_err_t bb_storage_write_event(const bb_event_record_t *event,
     esp_err_t err;
     char tmp_path[BB_STORAGE_MAX_PATH_LEN];
     char final_path[BB_STORAGE_MAX_PATH_LEN];
-    char ts_buf[24];
-    FILE *fp = NULL;
-    size_t i;
-    size_t bytes_written = 0U;
-    int rc;
-    uint32_t crc;
+
+    if (out_final_path != NULL) {
+        if (final_path_size == 0U) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        out_final_path[0] = '\0';
+    }
 
     err = bb_storage_validate_event(event);
     if (err != ESP_OK) {
         return err;
-    }
-    if (out_final_path != NULL && final_path_size == 0U) {
-        return ESP_ERR_INVALID_ARG;
     }
 
     bb_lock();
@@ -1020,151 +1380,11 @@ esp_err_t bb_storage_write_event(const bb_event_record_t *event,
         return ESP_ERR_INVALID_SIZE;
     }
 
-    /* Refuse to overwrite an existing completed event recording */
-    if (file_exists(final_path)) {
-        BB_LOGW("Finalized event file already exists: %s", final_path);
-        s_ctx.stats.last_error = ESP_ERR_INVALID_STATE;
-        bb_unlock();
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    /* Clean up any stale temporary file from a previously interrupted write */
-    (void)remove(tmp_path);
-
-    fp = fopen(tmp_path, "wb");
-    if (fp == NULL) {
-        BB_LOGE("Failed to open temporary file %s (errno=%d)", tmp_path, errno);
-        s_ctx.stats.write_failures++;
-        bb_set_status((errno == ENOSPC) ? BB_STORAGE_STATUS_FULL : BB_STORAGE_STATUS_WRITE_ERROR);
-        s_ctx.stats.last_error = (errno == ENOSPC) ? ESP_ERR_NO_MEM : ESP_FAIL;
-        bb_unlock();
-        return s_ctx.stats.last_error;
-    }
-
-    format_u64_dec(event->trigger_timestamp_us, ts_buf, sizeof(ts_buf));
-    rc = fprintf(fp,
-                 "# BLACKBOX_EVENT_FORMAT,v%u\n"
-                 "# event_id,%lu\n"
-                 "# trigger_timestamp_us,%s\n"
-                 "# sample_rate_hz,%u\n"
-                 "# flags,0x%08lX\n"
-                 "# pre_event_samples,%lu\n"
-                 "# post_event_samples,%lu\n"
-                 "# sample_count,%lu\n"
-                 "sample_idx,timestamp_us,offset_ms,sensor,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_mdps\n",
-                 (unsigned)event->format_version,
-                 (unsigned long)event->event_id,
-                 ts_buf,
-                 (unsigned)event->sample_rate_hz,
-                 (unsigned long)event->flags,
-                 (unsigned long)event->pre_event_samples,
-                 (unsigned long)event->post_event_samples,
-                 (unsigned long)event->sample_count);
-    if (rc <= 0) {
-        err = ESP_FAIL;
-        goto cleanup_error;
-    }
-    bytes_written += (size_t)rc;
-
-    for (i = 0U; i < event->sample_count; i++) {
-        const bb_storage_sample_t *s = &event->samples[i];
-
-#ifdef BB_STORAGE_HOST_TEST
-        if (s_test_faults.fail_write_enospc) {
-            errno = ENOSPC;
-            err = ESP_ERR_NO_MEM;
-            goto cleanup_error;
-        }
-        if (s_test_faults.fail_write_io) {
-            errno = EIO;
-            err = ESP_FAIL;
-            goto cleanup_error;
-        }
-#endif
-
-        format_u64_dec(s->timestamp_us, ts_buf, sizeof(ts_buf));
-        rc = fprintf(fp,
-                     "%lu,%s,%ld,%u,%ld,%ld,%ld,%ld,%ld,%ld\n",
-                     (unsigned long)i,
-                     ts_buf,
-                     (long)s->offset_ms,
-                     (unsigned)s->sensor_id,
-                     (long)s->accel_x_mg,
-                     (long)s->accel_y_mg,
-                     (long)s->accel_z_mg,
-                     (long)s->gyro_x_mdps,
-                     (long)s->gyro_y_mdps,
-                     (long)s->gyro_z_mdps);
-        if (rc <= 0 || ferror(fp)) {
-            err = (errno == ENOSPC) ? ESP_ERR_NO_MEM : ESP_FAIL;
-            goto cleanup_error;
-        }
-        bytes_written += (size_t)rc;
-    }
-
-    crc = bb_storage_compute_samples_crc32(event->samples, event->sample_count);
-    rc = fprintf(fp,
-                 "# END_EVENT,count=%lu,crc32=0x%08lX\n",
-                 (unsigned long)event->sample_count,
-                 (unsigned long)crc);
-    if (rc <= 0 || ferror(fp)) {
-        err = (errno == ENOSPC) ? ESP_ERR_NO_MEM : ESP_FAIL;
-        goto cleanup_error;
-    }
-    bytes_written += (size_t)rc;
-
-    if (fflush(fp) != 0) {
-        err = (errno == ENOSPC) ? ESP_ERR_NO_MEM : ESP_FAIL;
-        goto cleanup_error;
-    }
-
-#ifndef BB_STORAGE_HOST_TEST
-    if (fsync(fileno(fp)) != 0) {
-        BB_LOGW("fsync warning on %s (errno=%d)", tmp_path, errno);
-    }
-#endif
-
-    if (fclose(fp) != 0) {
-        fp = NULL;
-        err = ESP_FAIL;
-        goto cleanup_error;
-    }
-    fp = NULL;
-
-#ifdef BB_STORAGE_HOST_TEST
-    if (s_test_faults.fail_rename) {
-        err = ESP_FAIL;
-        goto cleanup_error;
-    }
-#endif
-
-    if (rename(tmp_path, final_path) != 0) {
-        BB_LOGE("Failed to finalize %s -> %s (errno=%d)", tmp_path, final_path, errno);
-        err = ESP_FAIL;
-        goto cleanup_error;
-    }
-
-    s_ctx.stats.events_written++;
-    s_ctx.stats.last_event_id = event->event_id;
-    s_ctx.stats.last_write_bytes = bytes_written;
-    s_ctx.stats.last_error = ESP_OK;
-    bb_set_status(BB_STORAGE_STATUS_READY);
-
-    if (out_final_path != NULL) {
+    err = write_event_to_paths_locked(event, tmp_path, final_path, true, NULL);
+    if (err == ESP_OK && out_final_path != NULL) {
         strcpy(out_final_path, final_path);
     }
 
-    bb_unlock();
-    return ESP_OK;
-
-cleanup_error:
-    if (fp != NULL) {
-        (void)fclose(fp);
-    }
-    (void)remove(tmp_path);
-    s_ctx.stats.write_failures++;
-    s_ctx.stats.last_error = err;
-    bb_set_status((err == ESP_ERR_NO_MEM) ? BB_STORAGE_STATUS_FULL : BB_STORAGE_STATUS_WRITE_ERROR);
     bb_unlock();
     return err;
 }
@@ -1173,61 +1393,142 @@ cleanup_error:
  * Event File Verification & Listing
  * ========================================================================= */
 
-static bool parse_sample_csv_row(const char *line,
+static bool split_exact_csv_fields(char *line, char *fields[], size_t expected_fields)
+{
+    size_t idx = 0U;
+    char *p = line;
+
+    if (line == NULL || expected_fields == 0U) {
+        return false;
+    }
+    fields[idx++] = p;
+    while (*p != '\0') {
+        if (*p == ',') {
+            if (idx >= expected_fields) {
+                return false;
+            }
+            *p = '\0';
+            fields[idx++] = p + 1;
+        }
+        p++;
+    }
+    return (idx == expected_fields);
+}
+
+static bool parse_sample_csv_row(char *line,
                                  unsigned long expected_idx,
                                  bb_storage_sample_t *out_sample)
 {
-    unsigned long idx = 0UL;
-    unsigned int sensor = 0U;
-    long offset_ms = 0L;
-    long ax = 0L, ay = 0L, az = 0L;
-    long gx = 0L, gy = 0L, gz = 0L;
-    char ts_str[32];
-    int matched;
+    char *fields[10];
+    uint32_t idx = 0UL;
+    uint32_t sensor = 0UL;
 
     if (line == NULL || out_sample == NULL) {
         return false;
     }
+    if (!split_exact_csv_fields(line, fields, 10U)) {
+        return false;
+    }
+    if (!parse_u32_dec(fields[0], &idx) || (unsigned long)idx != expected_idx) {
+        return false;
+    }
+    if (!parse_u64_dec(fields[1], &out_sample->timestamp_us)) {
+        return false;
+    }
+    if (!parse_i32_dec(fields[2], &out_sample->offset_ms)) {
+        return false;
+    }
+    if (!parse_u32_dec(fields[3], &sensor) || sensor > 255UL) {
+        return false;
+    }
+    out_sample->sensor_id = (uint8_t)sensor;
 
-    matched = sscanf(line,
-                     "%lu,%31[^,],%ld,%u,%ld,%ld,%ld,%ld,%ld,%ld",
-                     &idx, ts_str, &offset_ms, &sensor,
-                     &ax, &ay, &az, &gx, &gy, &gz);
-    if (matched != 10 || idx != expected_idx) {
+    if (!parse_i32_dec(fields[4], &out_sample->accel_x_mg) ||
+        !parse_i32_dec(fields[5], &out_sample->accel_y_mg) ||
+        !parse_i32_dec(fields[6], &out_sample->accel_z_mg) ||
+        !parse_i32_dec(fields[7], &out_sample->gyro_x_mdps) ||
+        !parse_i32_dec(fields[8], &out_sample->gyro_y_mdps) ||
+        !parse_i32_dec(fields[9], &out_sample->gyro_z_mdps)) {
         return false;
     }
-    if (!parse_u64_dec(ts_str, &out_sample->timestamp_us)) {
-        return false;
-    }
-    out_sample->offset_ms    = (int32_t)offset_ms;
-    out_sample->sensor_id    = (uint8_t)sensor;
-    out_sample->accel_x_mg   = (int32_t)ax;
-    out_sample->accel_y_mg   = (int32_t)ay;
-    out_sample->accel_z_mg   = (int32_t)az;
-    out_sample->gyro_x_mdps  = (int32_t)gx;
-    out_sample->gyro_y_mdps  = (int32_t)gy;
-    out_sample->gyro_z_mdps  = (int32_t)gz;
     return true;
 }
 
-esp_err_t bb_storage_verify_event_file(const char *file_path,
-                                       uint32_t expected_event_id,
-                                       size_t expected_sample_count)
+static bool strip_line_ending(char *line, size_t buf_size, FILE *fp)
+{
+    size_t len = strlen(line);
+    (void)buf_size;
+
+    if (len > 0U && line[len - 1U] == '\n') {
+        line[--len] = '\0';
+        if (len > 0U && line[len - 1U] == '\r') {
+            line[--len] = '\0';
+        }
+        return true;
+    }
+    /* No '\n' found: valid only if at genuine EOF without read error (last line without NL) */
+    if (!feof(fp)) {
+        /* Line exceeded buffer size */
+        return false;
+    }
+    if (len > 0U && line[len - 1U] == '\r') {
+        line[--len] = '\0';
+    }
+    return true;
+}
+
+static bool parse_end_event_footer(const char *line, uint32_t *out_count, uint32_t *out_crc)
+{
+    const char *p;
+    const char *crc_tag;
+    char count_buf[16];
+    size_t count_len;
+
+    if (strncmp(line, "# END_EVENT,count=", 18U) != 0) {
+        return false;
+    }
+    p = line + 18U;
+    crc_tag = strstr(p, ",crc32=0x");
+    if (crc_tag == NULL || crc_tag == p) {
+        return false;
+    }
+    count_len = (size_t)(crc_tag - p);
+    if (count_len >= sizeof(count_buf)) {
+        return false;
+    }
+    memcpy(count_buf, p, count_len);
+    count_buf[count_len] = '\0';
+    if (!parse_u32_dec(count_buf, out_count)) {
+        return false;
+    }
+    return parse_u32_hex(crc_tag + 9U, 8U, out_crc);
+}
+
+static esp_err_t verify_event_file_locked(const char *file_path,
+                                          uint32_t expected_event_id,
+                                          size_t expected_sample_count)
 {
     FILE *fp;
-    char line[256];
+    char line[384];
     bool has_format_header = false;
     bool has_event_id = false;
+    bool has_trigger_ts = false;
+    bool has_sample_rate = false;
+    bool has_flags = false;
+    bool has_pre_samples = false;
+    bool has_post_samples = false;
+    bool has_sample_count = false;
+    bool has_columns_header = false;
     bool has_end_footer = false;
-    unsigned long parsed_event_id = 0UL;
-    unsigned long footer_count = 0UL;
-    unsigned long footer_crc = 0UL;
+    uint32_t parsed_event_id = 0UL;
+    uint32_t header_sample_count = 0UL;
+    uint32_t pre_count = 0UL;
+    uint32_t post_count = 0UL;
+    uint32_t footer_count = 0UL;
+    uint32_t footer_crc = 0UL;
     size_t row_count = 0U;
     uint32_t running_crc = 0xFFFFFFFFUL;
-
-    if (file_path == NULL || file_path[0] == '\0') {
-        return ESP_ERR_INVALID_ARG;
-    }
+    bool io_err = false;
 
     fp = fopen(file_path, "rb");
     if (fp == NULL) {
@@ -1235,24 +1536,99 @@ esp_err_t bb_storage_verify_event_file(const char *file_path,
     }
 
     while (fgets(line, sizeof(line), fp) != NULL) {
-        if (strncmp(line, "# BLACKBOX_EVENT_FORMAT,v", 25U) == 0) {
-            unsigned int ver = 0U;
-            if (sscanf(line + 25U, "%u", &ver) == 1 && ver == BB_STORAGE_FORMAT_VERSION) {
+        if (!strip_line_ending(line, sizeof(line), fp) || line[0] == '\0' || has_end_footer) {
+            fclose(fp);
+            return ESP_FAIL;
+        }
+
+        if (!has_columns_header) {
+            uint64_t dummy_u64 = 0ULL;
+            uint32_t dummy_u32 = 0UL;
+
+            if (strncmp(line, "# BLACKBOX_EVENT_FORMAT,v", 25U) == 0) {
+                uint32_t ver = 0UL;
+                if (has_format_header || !parse_u32_dec(line + 25U, &ver) || ver != BB_STORAGE_FORMAT_VERSION) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
                 has_format_header = true;
-            }
-        } else if (strncmp(line, "# event_id,", 11U) == 0) {
-            if (sscanf(line + 11U, "%lu", &parsed_event_id) == 1) {
+            } else if (strncmp(line, "# event_id,", 11U) == 0) {
+                if (has_event_id || !parse_u32_dec(line + 11U, &parsed_event_id) ||
+                    parsed_event_id == 0UL || parsed_event_id > BB_STORAGE_MAX_EVENT_ID) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
                 has_event_id = true;
+            } else if (strncmp(line, "# trigger_timestamp_us,", 23U) == 0) {
+                if (has_trigger_ts || !parse_u64_dec(line + 23U, &dummy_u64)) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                has_trigger_ts = true;
+            } else if (strncmp(line, "# sample_rate_hz,", 17U) == 0) {
+                if (has_sample_rate || !parse_u32_dec(line + 17U, &dummy_u32) || dummy_u32 > 65535UL) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                has_sample_rate = true;
+            } else if (strncmp(line, "# flags,0x", 10U) == 0) {
+                if (has_flags || !parse_u32_hex(line + 10U, 8U, &dummy_u32)) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                has_flags = true;
+            } else if (strncmp(line, "# pre_event_samples,", 20U) == 0) {
+                if (has_pre_samples || !parse_u32_dec(line + 20U, &pre_count)) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                has_pre_samples = true;
+            } else if (strncmp(line, "# post_event_samples,", 21U) == 0) {
+                if (has_post_samples || !parse_u32_dec(line + 21U, &post_count)) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                has_post_samples = true;
+            } else if (strncmp(line, "# sample_count,", 15U) == 0) {
+                if (has_sample_count || !parse_u32_dec(line + 15U, &header_sample_count) ||
+                    header_sample_count == 0UL || header_sample_count > BB_STORAGE_MAX_SAMPLES) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                has_sample_count = true;
+            } else if (strcmp(line, CSV_COLUMNS_HEADER) == 0) {
+                if (!has_format_header || !has_event_id || !has_sample_count) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                if (has_pre_samples && pre_count > header_sample_count) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                if (has_post_samples && post_count > header_sample_count) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                if (has_pre_samples && has_post_samples &&
+                    (uint64_t)pre_count + (uint64_t)post_count > (uint64_t)header_sample_count) {
+                    fclose(fp);
+                    return ESP_FAIL;
+                }
+                has_columns_header = true;
+            } else {
+                fclose(fp);
+                return ESP_FAIL;
             }
         } else if (strncmp(line, "# END_EVENT,", 12U) == 0) {
-            if (sscanf(line, "# END_EVENT,count=%lu,crc32=0x%lx", &footer_count, &footer_crc) == 2) {
-                has_end_footer = true;
+            if (!parse_end_event_footer(line, &footer_count, &footer_crc)) {
+                fclose(fp);
+                return ESP_FAIL;
             }
-        } else if (line[0] == '#' || strncmp(line, "sample_idx,", 11U) == 0 || line[0] == '\r' || line[0] == '\n') {
-            continue;
+            has_end_footer = true;
         } else {
             bb_storage_sample_t s;
-            if (!parse_sample_csv_row(line, (unsigned long)row_count, &s)) {
+            if (row_count >= BB_STORAGE_MAX_SAMPLES ||
+                !parse_sample_csv_row(line, (unsigned long)row_count, &s)) {
                 fclose(fp);
                 return ESP_FAIL;
             }
@@ -1269,27 +1645,45 @@ esp_err_t bb_storage_verify_event_file(const char *file_path,
         }
     }
 
-    fclose(fp);
-
-    if (!has_format_header || !has_event_id || !has_end_footer || row_count == 0U) {
+    io_err = (ferror(fp) != 0);
+    if (fclose(fp) != 0 || io_err) {
         return ESP_FAIL;
     }
-    if (expected_event_id != 0UL && parsed_event_id != (unsigned long)expected_event_id) {
+
+    if (!has_format_header || !has_event_id || !has_sample_count ||
+        !has_columns_header || !has_end_footer || row_count == 0U) {
+        return ESP_FAIL;
+    }
+    if (row_count != (size_t)header_sample_count || row_count != (size_t)footer_count) {
+        return ESP_FAIL;
+    }
+    if (expected_event_id != 0UL && parsed_event_id != expected_event_id) {
         return ESP_FAIL;
     }
     if (expected_sample_count != 0U && row_count != expected_sample_count) {
         return ESP_FAIL;
     }
-    if (row_count != (size_t)footer_count) {
-        return ESP_FAIL;
-    }
 
     running_crc = ~running_crc;
-    if (running_crc != (uint32_t)footer_crc) {
+    if (running_crc != footer_crc) {
         return ESP_ERR_INVALID_CRC;
     }
 
     return ESP_OK;
+}
+
+esp_err_t bb_storage_verify_event_file(const char *file_path,
+                                       uint32_t expected_event_id,
+                                       size_t expected_sample_count)
+{
+    if (file_path == NULL || file_path[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (expected_event_id > BB_STORAGE_MAX_EVENT_ID ||
+        expected_sample_count > BB_STORAGE_MAX_SAMPLES) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return verify_event_file_locked(file_path, expected_event_id, expected_sample_count);
 }
 
 esp_err_t bb_storage_list_completed_events(char out_filenames[][BB_STORAGE_MAX_FILENAME_LEN],
@@ -1318,14 +1712,18 @@ esp_err_t bb_storage_list_completed_events(char out_filenames[][BB_STORAGE_MAX_F
         struct _finddata_t fileinfo;
         intptr_t handle;
 
-        sprintf(pattern, "%s/*.*", s_ctx.mount_point);
+        if (!join_mount_filename(s_ctx.mount_point, "*.*", pattern, sizeof(pattern))) {
+            bb_unlock();
+            return ESP_FAIL;
+        }
         handle = _findfirst(pattern, &fileinfo);
         if (handle == -1) {
             bb_unlock();
             return ESP_FAIL;
         }
         do {
-            if (bb_storage_is_completed_event_filename(fileinfo.name)) {
+            if ((fileinfo.attrib & FILE_ATTRIBUTE_DIRECTORY) == 0U &&
+                bb_storage_is_completed_event_filename(fileinfo.name)) {
                 if (out_filenames != NULL && count < max_files) {
                     strncpy(out_filenames[count], fileinfo.name, BB_STORAGE_MAX_FILENAME_LEN - 1U);
                     out_filenames[count][BB_STORAGE_MAX_FILENAME_LEN - 1U] = '\0';
@@ -1348,6 +1746,15 @@ esp_err_t bb_storage_list_completed_events(char out_filenames[][BB_STORAGE_MAX_F
         }
         while ((entry = readdir(dir)) != NULL) {
             if (bb_storage_is_completed_event_filename(entry->d_name)) {
+                char entry_path[BB_STORAGE_MAX_PATH_LEN];
+                struct stat st;
+                if (!join_mount_filename(s_ctx.mount_point, entry->d_name,
+                                         entry_path, sizeof(entry_path))) {
+                    continue;
+                }
+                if (stat(entry_path, &st) != 0 || !S_ISREG(st.st_mode)) {
+                    continue;
+                }
                 if (out_filenames != NULL && count < max_files) {
                     strncpy(out_filenames[count], entry->d_name, BB_STORAGE_MAX_FILENAME_LEN - 1U);
                     out_filenames[count][BB_STORAGE_MAX_FILENAME_LEN - 1U] = '\0';
@@ -1375,7 +1782,7 @@ esp_err_t bb_storage_self_test(void)
     };
 
     bb_event_record_t record;
-    bb_storage_stats_t saved_stats;
+    char tmp_path[BB_STORAGE_MAX_PATH_LEN];
     char final_path[BB_STORAGE_MAX_PATH_LEN];
     esp_err_t err;
 
@@ -1390,31 +1797,33 @@ esp_err_t bb_storage_self_test(void)
     record.sample_count         = 2U;
     record.samples              = test_samples;
 
+    bb_lock();
     if (!s_ctx.initialized) {
+        bb_unlock();
         return ESP_ERR_INVALID_STATE;
     }
 
-    saved_stats = s_ctx.stats;
-
-    /* Ensure any leftover self-test file is removed before starting */
-    if (bb_storage_build_event_paths(s_ctx.mount_point,
-                                     record.event_id,
-                                     NULL, 0U,
-                                     final_path, sizeof(final_path)) == ESP_OK) {
-        (void)remove(final_path);
-    }
-
-    err = bb_storage_write_event(&record, final_path, sizeof(final_path));
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    err = bb_storage_verify_event_file(final_path, record.event_id, record.sample_count);
-    (void)remove(final_path);
-    if (err == ESP_OK) {
-        bb_lock();
-        s_ctx.stats = saved_stats;
+    if (!join_mount_filename(s_ctx.mount_point, "BBTEST00.TMP", tmp_path, sizeof(tmp_path)) ||
+        !join_mount_filename(s_ctx.mount_point, "BBTEST00.CSV", final_path, sizeof(final_path))) {
         bb_unlock();
+        return ESP_ERR_INVALID_SIZE;
     }
+
+    (void)remove(tmp_path);
+    (void)remove(final_path);
+
+    err = write_event_to_paths_locked(&record, tmp_path, final_path, false, NULL);
+    if (err == ESP_OK) {
+        err = verify_event_file_locked(final_path, record.event_id, record.sample_count);
+    }
+
+    (void)remove(tmp_path);
+    (void)remove(final_path);
+
+    if (err != ESP_OK) {
+        s_ctx.stats.last_error = err;
+    }
+
+    bb_unlock();
     return err;
 }

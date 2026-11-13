@@ -389,42 +389,46 @@ esp_err_t bb_storage_format_event_csv(const bb_event_record_t *event,
  * @brief Persist a completed motion event record to the mounted microSD card.
  *
  * File Lifecycle Policy (Two-Phase Write + Rename):
- * 1. Validates `event` and checks that storage is `BB_STORAGE_STATUS_READY`.
+ * 1. Validates `event` and checks that storage is initialized (allows recovery writes
+ *    after an earlier `BB_STORAGE_STATUS_WRITE_ERROR` or `BB_STORAGE_STATUS_FULL`).
  * 2. Refuses to overwrite an already-finalized `E<id>.CSV` file (`ESP_ERR_INVALID_STATE`).
  * 3. Removes any stale `E<id>.TMP` left over from an interrupted prior attempt.
  * 4. Writes header, metadata, samples, and `# END_EVENT` CRC32 footer to `E<id>.TMP`.
- * 5. Flushes (`fflush` + `fsync`) and closes `E<id>.TMP`. If any write/flush/close step
- *    fails, removes `E<id>.TMP` and updates error statistics.
+ * 5. Flushes (`fflush` + `fsync`) and closes `E<id>.TMP`. Failure in write, flush,
+ *    fsync, close, or rename removes `E<id>.TMP`, updates error statistics, and
+ *    leaves `out_final_path[0] == '\0'`. `ENOSPC` maps to `ESP_ERR_NO_MEM` / `FULL`.
  * 6. Renames `E<id>.TMP` -> `E<id>.CSV` so `blackbox_interface` only ever sees completed files.
  *
  * @note FAT Power-Loss Limitation:
- *       While `.TMP` + flush + rename prevents readers from seeing partial writes during
- *       normal runtime, FAT filesystems on microSD are NOT power-loss atomic. Sudden power
- *       removal during SD sector writes can still corrupt FAT cluster chains.
+ *       While `.TMP` + flush + fsync + rename prevents readers from seeing partial writes
+ *       during normal runtime, FAT filesystems on microSD are NOT power-loss atomic. Sudden
+ *       power removal during SD sector writes can still corrupt FAT cluster chains.
  *
  * @param[in]  event          Pointer to event record to persist.
  * @param[out] out_final_path Optional buffer to receive the finalized file path (e.g. "/sdcard/E0000001.CSV").
  * @param[in]  final_path_size Size of `out_final_path` buffer (ignored if `out_final_path` is NULL).
  * @return
  *   - `ESP_OK` on durable write and finalization
- *   - `ESP_ERR_INVALID_ARG` / `ESP_ERR_INVALID_SIZE` on invalid event input
+ *   - `ESP_ERR_INVALID_ARG` / `ESP_ERR_INVALID_SIZE` on invalid event input or output buffer
  *   - `ESP_ERR_INVALID_STATE` if storage is not mounted or `event_id` already exists
  *   - `ESP_ERR_NO_MEM` if storage is full (`ENOSPC`)
- *   - `ESP_FAIL` on file open, write, flush, close, or rename failure
+ *   - `ESP_FAIL` on file open, write, flush, fsync, close, or rename failure
  */
 esp_err_t bb_storage_write_event(const bb_event_record_t *event,
                                  char *out_final_path,
                                  size_t final_path_size);
 
 /**
- * @brief Verify that a finalized event CSV file exists, is readable, and has a valid
- *        header, `# END_EVENT` completion footer, sample count, and CRC32.
+ * @brief Verify that a finalized event CSV file exists, is readable, and has valid
+ *        metadata headers, column header, sequential sample rows, `# END_EVENT`
+ *        completion footer, sample count, and CRC32.
  *
  * @param[in] file_path             Full path to the `.CSV` file to verify.
- * @param[in] expected_event_id     Expected event ID (`0` to skip ID check).
- * @param[in] expected_sample_count Expected sample count (`0` to accept count in footer).
+ * @param[in] expected_event_id     Expected event ID (`0` to skip ID check, otherwise `1..BB_STORAGE_MAX_EVENT_ID`).
+ * @param[in] expected_sample_count Expected sample count (`0` to accept count in footer, otherwise `1..BB_STORAGE_MAX_SAMPLES`).
  * @return
  *   - `ESP_OK` if file is complete and valid
+ *   - `ESP_ERR_INVALID_ARG` if `file_path` is NULL/empty or expected bounds exceed limits
  *   - `ESP_ERR_NOT_FOUND` if file cannot be opened
  *   - `ESP_ERR_INVALID_CRC` or `ESP_FAIL` if file is truncated, malformed, or mismatched
  */
@@ -435,8 +439,8 @@ esp_err_t bb_storage_verify_event_file(const char *file_path,
 /**
  * @brief List finalized event filenames (`E*.CSV`) currently stored on the microSD card.
  *
- * Automatically filters out any incomplete `.TMP` files or unrelated files so
- * `blackbox_interface` only lists completed recordings.
+ * Automatically filters out directories, incomplete `.TMP` files, or unrelated files
+ * so `blackbox_interface` only lists completed recordings.
  *
  * @param[out] out_filenames Array of filename buffers (`char[max_files][BB_STORAGE_MAX_FILENAME_LEN]`).
  *                           May be NULL if caller only wants to count completed files via `out_count`.
@@ -455,9 +459,11 @@ esp_err_t bb_storage_list_completed_events(char out_filenames[][BB_STORAGE_MAX_F
 /**
  * @brief Run a non-destructive read/write/verify self-test on the mounted microSD card.
  *
- * Creates a small synthetic test event (`event_id = BB_STORAGE_MAX_EVENT_ID`, flagged
- * `BB_EVENT_FLAG_SIMULATED`), writes it via `bb_storage_write_event()`, verifies it via
- * `bb_storage_verify_event_file()`, and removes the test file afterward so the card stays clean.
+ * Holds the internal mutex for the full duration and uses dedicated internal paths
+ * (`BBTEST00.TMP` -> `BBTEST00.CSV`, excluded by `bb_storage_is_completed_event_filename()`),
+ * writing a small synthetic test event (`event_id = BB_STORAGE_MAX_EVENT_ID`, flagged
+ * `BB_EVENT_FLAG_SIMULATED`), verifying it strictly, removing the test file afterward,
+ * and leaving operational event counters untouched when passing.
  *
  * @return
  *   - `ESP_OK` if write, readback verification, and cleanup all succeed
@@ -470,15 +476,23 @@ esp_err_t bb_storage_self_test(void);
  * @brief Fault-injection hooks available ONLY in host-side unit test builds (`BB_STORAGE_HOST_TEST`).
  */
 typedef struct {
-    bool fail_mount;        /**< Simulate esp_vfs_fat_sdspi_mount failure */
-    bool fail_spi_bus;      /**< Simulate spi_bus_initialize failure */
-    bool fail_unmount;      /**< Simulate esp_vfs_fat_sdcard_unmount failure */
-    bool fail_spi_bus_free; /**< Simulate spi_bus_free failure */
-    bool fail_write_enospc; /**< Simulate disk full (ENOSPC) mid-write */
-    bool fail_write_io;     /**< Simulate low-level SPI/SD I/O error mid-write */
-    bool fail_rename;       /**< Simulate rename(.TMP -> .CSV) failure */
-    uint64_t mock_total_bytes; /**< Simulated card total bytes */
-    uint64_t mock_free_bytes;  /**< Simulated card free bytes */
+    bool     fail_mount;        /**< Simulate esp_vfs_fat_sdspi_mount failure */
+    bool     fail_spi_bus;      /**< Simulate spi_bus_initialize failure */
+    bool     fail_unmount;      /**< Simulate esp_vfs_fat_sdcard_unmount failure */
+    bool     fail_spi_bus_free; /**< Simulate spi_bus_free failure */
+    bool     fail_fopen;        /**< Simulate fopen(.TMP) failure */
+    bool     fail_header_write; /**< Simulate header fprintf failure */
+    bool     fail_write_enospc; /**< Simulate disk full (ENOSPC) mid-write */
+    bool     fail_write_io;     /**< Simulate low-level SPI/SD I/O error mid-write */
+    size_t   fail_after_samples;/**< Number of samples to write before fail_write_enospc/io triggers (0 = sample 0) */
+    bool     fail_footer_write; /**< Simulate footer write failure */
+    bool     fail_fflush;       /**< Simulate fflush failure */
+    bool     fail_fsync;        /**< Simulate fsync failure */
+    bool     fail_fclose;       /**< Simulate fclose failure */
+    bool     fail_rename;       /**< Simulate rename(.TMP -> .CSV) failure */
+    bool     fail_rename_enospc;/**< Simulate rename failing with ENOSPC */
+    uint64_t mock_total_bytes;  /**< Simulated card total bytes */
+    uint64_t mock_free_bytes;   /**< Simulated card free bytes */
 } bb_storage_test_faults_t;
 
 typedef struct {
