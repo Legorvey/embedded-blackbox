@@ -11,4 +11,4 @@ sample_idx,timestamp_us,offset_ms,sensor,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_md
 1,5010000,-10,2,18,-22,1004,0,0,0
 2,5020000,0,1,2940,-510,1250,1450,320,-90
 3,5030000,10,2,410,-95,1015,0,0,0
-# END_EVENT,count=4,crc32=0x90C76B22
+# END_EVENT,count=4,crc32=0x10BF5ABE

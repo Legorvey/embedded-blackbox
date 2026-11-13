@@ -1,8 +1,10 @@
 Command executed:
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\tests\run_tests.ps1"
 
-Timestamp: 2026-11-13T18:30:01+07:00
+Timestamp: 2026-11-13T21:33:02+07:00
 Exit code: 0
+
+Note: Full 'idf.py build' ELF/BIN link NOT RUN (standalone ESP-IDF CLI / CMake / Ninja not installed).
 
 Verbatim Output:
 ============================================================
@@ -12,9 +14,9 @@ xtensa-esp-elf-gcc.exe (crosstool-NG esp-14.2.0_20241119) 14.2.0
 
 Name                               Length
 ----                               ------
-blackbox_storage_esp32s3.o         100952
-main_esp32s3.o                      14992
-test_blackbox_storage_host_check.o  45852
+blackbox_storage_esp32s3.o         147784
+main_esp32s3.o                      15004
+test_blackbox_storage_host_check.o  81616
 
 
 [PASS] ESP32-S3 cross-compilation against ESP-IDF v5.4 headers succeeded with 0 warnings.
@@ -22,17 +24,38 @@ test_blackbox_storage_host_check.o  45852
 ============================================================
  STEP 2: Host Unit & Fault-Injection Test Suite
 ============================================================
+[HOST] Running strict C11 build via MinGW GCC...
+gcc.exe (tdm64-1) 4.9.2
 ============================================================
- blackbox_storage Host Unit & Fault-Injection Test Suite
+ blackbox_storage Host Unit, Fault & Concurrency Test Suite
  (NOTE: Uses SYNTHETIC/SIMULATED data on host filesystem)
 ============================================================
 [RUN ] test_config_validation
-[E] bb_storage: gpio_cs is not configured (GPIO_NUM_NC). Set verified CS pin before init
+[E] bb_storage: gpio_cs (-1) is not configured or invalid for ESP32-S3 output
 [E] bb_storage: format_if_mount_failed=true is forbidden by safety policy
-[E] bb_storage: Invalid mount_point (must be non-empty, <= 31 chars, no trailing slash)
-[E] bb_storage: Invalid mount_point (must be non-empty, <= 31 chars, no trailing slash)
-[E] bb_storage: Invalid mount_point (must be non-empty, <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid SPI host_id (0); expected SPI2_HOST (1) or SPI3_HOST (2)
+[E] bb_storage: Invalid SPI host_id (3); expected SPI2_HOST (1) or SPI3_HOST (2)
+[E] bb_storage: Invalid SPI host_id (-1); expected SPI2_HOST (1) or SPI3_HOST (2)
+[E] bb_storage: max_open_files (0) out of range [1..16]
+[E] bb_storage: max_open_files (17) out of range [1..16]
+[E] bb_storage: max_freq_khz (0) out of range (1..40000)
+[E] bb_storage: max_freq_khz (40001) out of range (1..40000)
+[E] bb_storage: gpio_cs (22) is not configured or invalid for ESP32-S3 output
+[E] bb_storage: gpio_cs (49) is not configured or invalid for ESP32-S3 output
+[E] bb_storage: Invalid ESP32-S3 GPIO pin in SPI config (MOSI=25, MISO=13, SCLK=12)
 [E] bb_storage: Duplicate GPIO pin assignment detected in SPI configuration
+[E] bb_storage: gpio_cs collides with configured SPI bus pin
 [PASS] test_config_validation
 [RUN ] test_lifecycle_and_mount_failures
 [W] bb_storage: bb_storage_init called while already initialized
@@ -46,8 +69,64 @@ test_blackbox_storage_host_check.o  45852
 [RUN ] test_write_verify_and_corruption_detection
 [W] bb_storage: Finalized event file already exists: ./build_test_sdcard/E0000001.CSV
 [PASS] test_write_verify_and_corruption_detection
-[RUN ] test_fault_injection_and_listing
-[PASS] test_fault_injection_and_listing
+[RUN ] test_fault_injection_recovery_and_listing
+[E] bb_storage: Simulated fopen failure on ./build_test_sdcard/E0000077.TMP
+[PASS] test_fault_injection_recovery_and_listing
+[RUN ] test_concurrent_multithreaded_access
+[PASS] test_concurrent_multithreaded_access
 ------------------------------------------------------------
- Summary: 7/7 passed, 0 failed
+ Summary: 8/8 passed, 0 failed
+============================================================
+
+[HOST] Running compatibility build via MATLAB lcc64...
+============================================================
+ blackbox_storage Host Unit, Fault & Concurrency Test Suite
+ (NOTE: Uses SYNTHETIC/SIMULATED data on host filesystem)
+============================================================
+[RUN ] test_config_validation
+[E] bb_storage: gpio_cs (-1) is not configured or invalid for ESP32-S3 output
+[E] bb_storage: format_if_mount_failed=true is forbidden by safety policy
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must start with '/', <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid SPI host_id (0); expected SPI2_HOST (1) or SPI3_HOST (2)
+[E] bb_storage: Invalid SPI host_id (3); expected SPI2_HOST (1) or SPI3_HOST (2)
+[E] bb_storage: Invalid SPI host_id (-1); expected SPI2_HOST (1) or SPI3_HOST (2)
+[E] bb_storage: max_open_files (0) out of range [1..16]
+[E] bb_storage: max_open_files (17) out of range [1..16]
+[E] bb_storage: max_freq_khz (0) out of range (1..40000)
+[E] bb_storage: max_freq_khz (40001) out of range (1..40000)
+[E] bb_storage: gpio_cs (22) is not configured or invalid for ESP32-S3 output
+[E] bb_storage: gpio_cs (49) is not configured or invalid for ESP32-S3 output
+[E] bb_storage: Invalid ESP32-S3 GPIO pin in SPI config (MOSI=25, MISO=13, SCLK=12)
+[E] bb_storage: Duplicate GPIO pin assignment detected in SPI configuration
+[E] bb_storage: gpio_cs collides with configured SPI bus pin
+[PASS] test_config_validation
+[RUN ] test_lifecycle_and_mount_failures
+[W] bb_storage: bb_storage_init called while already initialized
+[PASS] test_lifecycle_and_mount_failures
+[RUN ] test_event_input_validation
+[PASS] test_event_input_validation
+[RUN ] test_paths_and_filename_predicate
+[PASS] test_paths_and_filename_predicate
+[RUN ] test_csv_serialization_and_crc32
+[PASS] test_csv_serialization_and_crc32
+[RUN ] test_write_verify_and_corruption_detection
+[W] bb_storage: Finalized event file already exists: ./build_test_sdcard/E0000001.CSV
+[PASS] test_write_verify_and_corruption_detection
+[RUN ] test_fault_injection_recovery_and_listing
+[E] bb_storage: Simulated fopen failure on ./build_test_sdcard/E0000077.TMP
+[PASS] test_fault_injection_recovery_and_listing
+[RUN ] test_concurrent_multithreaded_access
+[PASS] test_concurrent_multithreaded_access
+------------------------------------------------------------
+ Summary: 8/8 passed, 0 failed
 ============================================================
