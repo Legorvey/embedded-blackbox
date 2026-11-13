@@ -43,11 +43,11 @@ embedded-blackbox-storage-starter/
 │       ├── blackbox_storage.c           # Implementasi SDSPI, FATFS VFS, CSV, CRC-32
 │       └── README.md                    # Dokumentasi teknis komponen Storage
 ├── tests/
-│   ├── test_blackbox_storage_host.c     # Unit test & fault-injection di host (7 test suites)
-│   └── run_tests.ps1                    # Script otomatis cross-compile ESP32-S3 + host test
+│   ├── test_blackbox_storage_host.c     # Unit, fault-injection & concurrency test suite (8 test suites)
+│   └── run_tests.ps1                    # Script otomatis cross-compile ESP32-S3 + host tests (GCC & lcc64)
 ├── evidence/
 │   ├── build-and-test-log.txt           # Log hasil cross-compile & unit test aktual
-│   └── example-event-simulated.csv      # Contoh berkas CSV hasil serialisasi (SIMULASI)
+│   └── example-event-simulated.csv      # Contoh berkas CSV hasil serialisasi (SIMULASI, 441 bytes, CRC 0x10BF5ABE)
 ├── docs/
 │   ├── 00-PETA-KONTEKS.md               # Peta sumber tugas dosen vs brief ketua
 │   ├── 01-STORAGE-TUGAS-GUE.md          # Scope, milestone, dan status pengerjaan Storage
@@ -84,9 +84,9 @@ Jalankan script pengujian otomatis dari PowerShell:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run_tests.ps1
 ```
 
-Script ini menjalankan dua tahap verifikasi nyata:
-1. **Cross-Compilation (`xtensa-esp32s3-elf-gcc -Wall -Wextra -Werror`)**: Mengompilasi `components/blackbox_storage/blackbox_storage.c` dan `main/main.c` terhadap header asli ESP-IDF v5.4 (`esp32s3`).
-2. **Host Unit & Fault-Injection Tests (`test_blackbox_storage_host.exe`)**: Menguji 7 kelompok uji (validasi konfigurasi, siklus init/deinit/mount gagal, validasi input event, penamaan file 8.3 `.TMP`/`.CSV`, serialisasi CSV & determinisme CRC-32, deteksi korupsi/file terpotong, serta injeksi error disk penuh `ENOSPC` dan error I/O).
+Script ini menjalankan verifikasi otomatis dalam dua tahap:
+1. **Cross-Compilation (`xtensa-esp32s3-elf-gcc -Wall -Wextra -Werror`)**: Mengompilasi `components/blackbox_storage/blackbox_storage.c` dan `main/main.c` terhadap header asli ESP-IDF v5.4 (`esp32s3`), serta memeriksa strict C17 compilation pada `tests/test_blackbox_storage_host.c`.
+2. **Host Unit, Fault-Injection & Concurrency Tests**: Mengompilasi dan menjalankan 8 kelompok uji via **MinGW GCC (`-std=gnu11 -Wall -Wextra -Werror`)** dan **MATLAB `lcc64`** (validasi konfigurasi/GPIO ESP32-S3, lifecycle & pembersihan gagal unmount, validasi event & overflow guard, penamaan file 8.3 `.TMP`/`.CSV`, serialisasi CSV & CRC-32 `0x10BF5ABE`, verifikasi CSV ketat/korupsi/CRLF/2048 sampel, fault injection single-point `fopen`–`fsync`–`rename`/`ENOSPC` & pemulihan status, filter direktori pada listing, `self_test` dengan `BBTEST00`, serta stress test konkurensi 4 thread).
 
 ### B. Build Firmware Penuh dengan ESP-IDF Command Prompt (Saat `idf.py` Aktif)
 
@@ -98,9 +98,13 @@ idf.py build
 
 ---
 
-## 5. Status Implementasi & Verifikasi Saat Ini
+## 5. Status Implementasi & Verifikasi Saat Ini (6 Tingkat)
 
-- **Komponen `blackbox_storage`:** **SELESAI DIIMPLEMENTASIKAN** (`include/blackbox_storage.h`, `blackbox_storage.c`, `CMakeLists.txt`).
-- **Cross-Compilation ESP32-S3 (ESP-IDF v5.4 SDK):** **PASS** (`0 warnings`, `0 errors` dengan `-Wall -Wextra -Werror`).
-- **Host Unit & Fault-Injection Tests:** **PASS (7/7 test suites lulus)**.
-- **Pengujian Hardware Fisik (microSD + ESP32-S3):** **UNVERIFIED ON HARDWARE** — belum ada board ESP32-S3 yang terhubung ke port serial dan pin GPIO SPI tim belum ditetapkan.
+| Tingkat Verifikasi | Status Saat Ini | Detail Terverifikasi |
+|---|---|---|
+| 1. **Diimplementasikan di kode** | **SELESAI** | `components/blackbox_storage/` (`include/blackbox_storage.h`, `blackbox_storage.c`, `CMakeLists.txt`), `sdkconfig.defaults`, `main/main.c` |
+| 2. **Diujikan secara unit test di host** | **PASS (8/8)** | Lulus **8/8 suites** pada **MinGW GCC 4.9.2 (`-std=gnu11 -Wall -Wextra -Werror`)** & **MATLAB `lcc64`** (termasuk konkurensi 4 thread) |
+| 3. **Cross-compile objek target `esp32s3`** | **PASS** | `blackbox_storage_esp32s3.o` (`147.784` B), `main_esp32s3.o` (`15.004` B) via `xtensa-esp32s3-elf-gcc` 14.2.0 terhadap SDK ESP-IDF v5.4 (`0 warnings`) |
+| 4. **Full link firmware ESP-IDF (`.elf`/`.bin`)** | **NOT RUN** | `idf.py` standalone / CMake / Ninja / VS Code ESP-IDF Extension tidak terpasang di mesin lokal |
+| 5. **Perilaku hardware fisik microSD** | **UNVERIFIED ON HARDWARE** | Tidak ada board ESP32-S3 terhubung ke port serial dan pin GPIO SPI tim belum ditetapkan |
+| 6. **Integrasi komponen tim lainnya** | **INTEGRATION PENDING** | Menunggu komponen Anggota 1 (`imu_i2c`), 2 (`imu_spi`), 4 (`interface`), dan 5 (`core`) |

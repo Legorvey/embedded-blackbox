@@ -6,30 +6,31 @@
 
 ## 1. Penjelasan 30 Detik (Untuk Ketua / Presenter)
 
-> "Komponen `blackbox_storage` sudah selesai diimplementasikan sebagai komponen reusable ESP-IDF (`blackbox_storage.h`, `blackbox_storage.c`, dan `CMakeLists.txt`). Komponen ini menangani mounting microSD via SDSPI dan FATFS VFS, mendukung mode bus SPI mandiri maupun berbagi bus dengan sensor ADXL345, serta menyimpan rekaman event dalam format CSV berversi lengkap dengan checksum CRC-32. Supaya komponen Interface (HTTP server) tidak pernah mengunduh file yang baru tertulis separuh, kami menerapkan mekanisme tulis dua tahap: data ditulis dulu ke file sementara `.TMP`, di-*flush*, lalu di-*rename* menjadi `.CSV` setelah utuh. Kode sudah lulus *cross-compilation* untuk target **ESP32-S3 (ESP-IDF v5.4)** tanpa warning/error dan lulus **7 dari 7 pengujian unit & fault-injection di host**. Pengujian pada kartu microSD fisik berstatus *UNVERIFIED ON HARDWARE* menunggu penetapan pin GPIO board ESP32-S3 tim."
+> "Komponen `blackbox_storage` sudah selesai diimplementasikan dan di-hardening sebagai komponen reusable ESP-IDF (`blackbox_storage.h`, `blackbox_storage.c`, dan `CMakeLists.txt`). Komponen ini menangani mounting microSD via SDSPI dan FATFS VFS, mendukung mode bus SPI mandiri maupun berbagi bus dengan sensor ADXL345 lewat opsi `manage_spi_bus`, memakai mutex FreeRTOS statis serta pembacaan status *lock-free/atomic*, dan menyimpan rekaman event dalam format CSV `v1` lengkap dengan checksum CRC-32. Supaya komponen Interface (HTTP server) tidak pernah mengunduh file yang baru tertulis separuh, kami menerapkan siklus tulis dua tahap `.TMP` -> `fflush`/`fsync`/`fclose` -> `rename` menjadi `.CSV`. Kode sudah lulus cross-compilation objek untuk target **ESP32-S3 (ESP-IDF v5.4)** tanpa warning/error dan lulus **8 dari 8 suite unit, fault-injection, & concurrency test** pada host (MinGW GCC & `lcc64`). Full *link* firmware `.elf`/`.bin` (`idf.py build`) berstatus *NOT RUN* karena lingkungan `idf.py` standalone belum terpasang, dan pengujian kartu microSD fisik berstatus *UNVERIFIED ON HARDWARE* menunggu penetapan pin GPIO board ESP32-S3 tim."
 
 ---
 
 ## 2. Checklist Status Deliverable Storage
 
-- [x] **Struktur proyek ESP-IDF siap:** `CMakeLists.txt`, `sdkconfig.defaults`, `main/`, `components/blackbox_storage/`
-- [x] **Source code komponen Storage lengkap:**
+- [x] **Struktur proyek & konfigurasi ESP-IDF siap:** `CMakeLists.txt`, `sdkconfig.defaults` (`CONFIG_FATFS_FS_LOCK=16`, stack `6144`), `main/`, `components/blackbox_storage/`
+- [x] **Source code komponen Storage lengkap & ter-hardening:**
   - [`components/blackbox_storage/include/blackbox_storage.h`](../components/blackbox_storage/include/blackbox_storage.h)
   - [`components/blackbox_storage/blackbox_storage.c`](../components/blackbox_storage/blackbox_storage.c)
   - [`components/blackbox_storage/CMakeLists.txt`](../components/blackbox_storage/CMakeLists.txt)
   - [`components/blackbox_storage/README.md`](../components/blackbox_storage/README.md)
-- [x] **Contoh file output CSV berlabel simulasi:** [`evidence/example-event-simulated.csv`](../evidence/example-event-simulated.csv)
-- [x] **Hasil Cross-Compilation Target `esp32s3` (ESP-IDF v5.4 SDK):** **PASS** (`xtensa-esp32s3-elf-gcc` 14.2.0 dengan `-Wall -Wextra -Werror`, 0 warnings, 0 errors — lihat [`evidence/build-and-test-log.txt`](../evidence/build-and-test-log.txt))
-- [x] **Hasil Unit Test & Fault-Injection di Host:** **PASS (7/7 test suites lulus)**
+- [x] **Contoh file output CSV berlabel simulasi (441 bytes, CRC `0x10BF5ABE`):** [`evidence/example-event-simulated.csv`](../evidence/example-event-simulated.csv)
+- [x] **Hasil Cross-Compilation Objek Target `esp32s3` (ESP-IDF v5.4 SDK):** **PASS** (`xtensa-esp32s3-elf-gcc` 14.2.0 `-Wall -Wextra -Werror`, `0 warnings` — lihat [`evidence/build-and-test-log.txt`](../evidence/build-and-test-log.txt))
+- [x] **Hasil Host Unit, Fault-Injection & Concurrency Tests:** **PASS (8/8 test suites lulus di MinGW GCC `-std=gnu11` & MATLAB `lcc64`)**
+- [ ] **Full Firmware Link (`idf.py build` -> `.elf` / `.bin`):** **NOT RUN** — menunggu instalasi lingkungan CLI `idf.py` / VS Code ESP-IDF Extension
 - [ ] **Hasil Uji di Hardware Fisik (ESP32-S3 + microSD):** **BELUM DIUJI (`UNVERIFIED ON HARDWARE`)** — menunggu board fisik dan konfirmasi pin GPIO SPI (`MOSI`, `MISO`, `SCLK`, `CS`)
-- [ ] **Commit & Push ke GitHub (`https://github.com/Legorvey/embedded-blackbox.git`):** Menunggu review dan eksekusi manual oleh pemilik Storage
+- [ ] **Sinkronisasi Remote ke GitHub (`https://github.com/Legorvey/embedded-blackbox.git`):** Commit fitur tersimpan lokal di branch `feat/blackbox-storage-hardening`; push menunggu izin manual pemilik repo
 
 ---
 
 ## 3. Panduan Tanya-Jawab Dosen Saat Presentasi
 
-**Q1: Kenapa microSD diakses lewat SPI (SDSPI), bukan SDMMC 4-bit?**  
-**Jawab:** Karena diagram spesifikasi tugas dosen secara eksplisit meminta SD card terhubung melalui bus **SPI** bersama sensor SPI. ESP-IDF v5.4 menyediakan driver resmi `sdspi_host` dan `esp_vfs_fat_sdspi_mount()` yang menjembatani bus SPI dengan sistem berkas FATFS.
+**Q1: Kenapa microSD diakses lewat SPI (SDSPI), dan bagaimana pembagian bus dengan ADXL345?**  
+**Jawab:** Diagram spesifikasi tugas dosen menempatkan kartu SD pada jalur **SPI** bersama perangkat SPI lain (ADXL345). ESP-IDF v5.4 menyediakan driver resmi `sdspi_host` dan `esp_vfs_fat_sdspi_mount()` untuk menghubungkan FATFS melalui SPI. Karena tim belum memutuskan secara final apakah ADXL345 dan microSD memakai 1 bus SPI yang sama (`SPI2_HOST`) atau controller terpisah (`SPI2_HOST` dan `SPI3_HOST`), `blackbox_storage` sudah dirancang mendukung keduanya lewat opsi `cfg.manage_spi_bus` (`true` = bus dikelola Storage, `false` = bus berbagi sudah di-init pemilik eksternal dengan DMA aktif).
 
 **Q2: Kenapa komponen Storage dipisah dari Core dan tidak langsung membaca sensor?**  
 **Jawab:** Agar pembacaan sensor gerak (target 100 Hz) tidak terblokir oleh latensi penulisan kartu microSD yang tidak deterministik. `blackbox_core` mengumpulkan sampel di RAM dan menyerahkan *snapshot* event ke `blackbox_storage` untuk ditulis dari task berprioritas lebih rendah.
@@ -51,8 +52,8 @@
 > "Bro, bagian `blackbox_storage` gue udah siap diimplementasikan lengkap sama unit test dan dokumentasinya. Scope yang udah jalan: init/unmount SDSPI + FATFS VFS (support bus SPI sendiri maupun sharing sama ADXL345 lewat flag `manage_spi_bus`), format event CSV v1 + checksum CRC-32, proteksi file sementara `.TMP` -> `.CSV` biar Interface nggak baca file setengah matang, dan filter daftar file selesai (`bb_storage_list_completed_events`).
 >
 > Status pengujian:
-> 1. Cross-compile target `esp32s3` pakai `xtensa-esp32s3-elf-gcc` (ESP-IDF v5.4 headers, `-Wall -Wextra -Werror`): **PASS (0 warnings/errors)**.
-> 2. Host unit & fault-injection test (`tests/run_tests.ps1`): **PASS (7/7 test suites lulus)**.
+> 1. Cross-compile objek target `esp32s3` pakai `xtensa-esp32s3-elf-gcc` (ESP-IDF v5.4 headers, `-Wall -Wextra -Werror`): **PASS (0 warnings/errors)**; full `idf.py build` `.elf`/`.bin` belum dijalankan karena `idf.py` standalone belum terpasang.
+> 2. Host unit, fault-injection & concurrency test (`tests/run_tests.ps1`): **PASS (8/8 test suites lulus di MinGW GCC & lcc64)**.
 > 3. Hardware microSD fisik: **UNVERIFIED ON HARDWARE** karena pin GPIO SPI board kita (`MOSI`, `MISO`, `SCLK`, `CS`) belum dikunci.
 >
 > Kontrak API buat Core & Interface udah gue tulis rapi di `docs/02-KONTRAK-INTEGRASI.md`, bukti log ada di `docs/03-PENGUJIAN-DAN-BUKTI.md` & `evidence/`, dan poin presentasi 30 detik buat hari Senin udah gue taruh di `docs/04-HANDOFF-PRESENTASI.md`."

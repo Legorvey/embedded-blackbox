@@ -11,11 +11,13 @@
    - **Kontrak Lifetime Memori:** `bb_storage_write_event()` bersifat **sinkron (blocking)** dan selesai membaca `event` serta array `event->samples` sebelum fungsi kembali (*return*). Pemanggil (`blackbox_core`) tetap memiliki buffer tersebut dan bebas menggunakan ulang atau membebaskan memorinya segera setelah `bb_storage_write_event()` selesai.
 2. **`blackbox_storage` -> `blackbox_interface`:**
    - Saat proses penulisan berlangsung, berkas ditulis ke nama sementara `E<7-digit-hex>.TMP` (contoh: `/sdcard/E0000001.TMP`).
-   - Setelah seluruh sampel dan footer `# END_EVENT,count=...,crc32=0x...` berhasil di-*flush* dan ditutup, berkas di-*rename* menjadi `E<7-digit-hex>.CSV` (contoh: `/sdcard/E0000001.CSV`).
+   - Setelah seluruh sampel dan footer `# END_EVENT,count=...,crc32=0x...` berhasil di-*flush* (`fflush` + `fsync`) dan ditutup, berkas di-*rename* menjadi `E<7-digit-hex>.CSV` (contoh: `/sdcard/E0000001.CSV`).
    - `blackbox_interface` wajib memanggil `bb_storage_list_completed_events()` (atau memfilter menggunakan `bb_storage_is_completed_event_filename()`) sehingga klien HTTP **hanya pernah melihat dan mengunduh berkas `.CSV` yang sudah selesai**.
+   - Untuk polling LED/OLED/HTTP status tanpa risiko tertunda latensi SD card, Interface dapat memanggil `bb_storage_get_status()` yang bersifat *lock-free/atomic*.
 3. **Koordinasi Bus SPI (`blackbox_imu_spi` / ADXL345 & `blackbox_storage`):**
-   - Jika microSD menggunakan controller SPI terpisah dari ADXL345, set `cfg.manage_spi_bus = true` (default). `blackbox_storage` akan memanggil `spi_bus_initialize()` dan `spi_bus_free()`.
-   - Jika microSD dan ADXL345 **berbagi satu bus SPI** (misal `SPI2_HOST`), pemilik bus utama (`blackbox_core`) harus menginisialisasi bus SPI satu kali, menahan pin CS ADXL345 tetap *HIGH* (inaktif), lalu memanggil `bb_storage_init()` dengan `cfg.manage_spi_bus = false`.
+   - Jika microSD menggunakan controller SPI terpisah dari ADXL345 (`SPI2_HOST` vs `SPI3_HOST`), set `cfg.manage_spi_bus = true` (default). `blackbox_storage` akan memanggil `spi_bus_initialize()` dan `spi_bus_free()`.
+   - Jika microSD dan ADXL345 **berbagi satu bus SPI** (misal `SPI2_HOST`), pemilik bus utama (`blackbox_core`) wajib menginisialisasi bus SPI satu kali dengan **DMA aktif (`SPI_DMA_CH_AUTO`)** dan **`max_transfer_sz >= 4000`**, menahan **seluruh pin CS (SD & ADXL345) tetap HIGH (inaktif)**, lalu memanggil `bb_storage_init()` dengan `cfg.manage_spi_bus = false`.
+   - Pada target ESP-IDF, `cfg.mount_point` harus diawali `'/'` dan panjangnya tidak melebihi `ESP_VFS_PATH_MAX` (`15` karakter, misalnya `"/sdcard"`).
 
 ---
 
@@ -72,6 +74,33 @@ esp_err_t bb_storage_list_completed_events(char out_filenames[][BB_STORAGE_MAX_F
                                            size_t max_files,
                                            size_t *out_count);
 ```
+
+### D. Contoh Pemakaian Singkat untuk `blackbox_core` & `blackbox_interface`
+
+```c
+/* 1. Inisialisasi & Penulisan oleh Storage Writer Task di blackbox_core */
+bb_storage_config_t st_cfg = BB_STORAGE_CONFIG_DEFAULT();
+st_cfg.gpio_mosi = BOARD_SPI_MOSI;
+st_cfg.gpio_miso = BOARD_SPI_MISO;
+st_cfg.gpio_sclk = BOARD_SPI_SCLK;
+st_cfg.gpio_cs   = BOARD_SD_CS;
+/* Jika berbagi bus SPI dengan ADXL345 yang sudah init duluan: st_cfg.manage_spi_bus = false; */
+esp_err_t err = bb_storage_init(&st_cfg);
+
+/* Dari FreeRTOS queue task prioritas rendah: */
+char saved_path[BB_STORAGE_MAX_PATH_LEN];
+err = bb_storage_write_event(&event_record, saved_path, sizeof(saved_path));
+
+/* 2. Daftar file selesai & status cepat di blackbox_interface */
+bb_storage_status_t status = bb_storage_get_status(); /* non-blocking / atomic */
+char files[32][BB_STORAGE_MAX_FILENAME_LEN];
+size_t count = 0;
+if (bb_storage_list_completed_events(files, 32, &count) == ESP_OK) {
+    /* Membangun path unduhan HTTP: "/sdcard/" + files[i] */
+}
+```
+
+> **Catatan Konkurensi FATFS:** `sdkconfig.defaults` sudah menyetel `CONFIG_FATFS_FS_LOCK=16` agar FatFs VFS aman bila Core dan Interface mengakses VFS dari task terpisah. Namun bila Interface ingin menghindari membaca file selama `bb_storage_write_event` berlangsung, koordinasikan apakah perlu helper pembacaan atau cukup mengandalkan nama `.CSV` yang sudah difinalisasi + `CONFIG_FATFS_FS_LOCK=16`.
 
 ---
 

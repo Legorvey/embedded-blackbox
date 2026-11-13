@@ -32,8 +32,8 @@ components/blackbox_storage/
 ```
 
 ### Dependensi ESP-IDF (`CMakeLists.txt`)
-- `REQUIRES`: `fatfs`, `sdmmc`, `esp_driver_sdspi`, `esp_driver_spi`, `esp_driver_gpio`, `vfs`
-- `PRIV_REQUIRES`: `log`, `freertos`
+- `REQUIRES`: `esp_driver_sdspi`, `esp_driver_spi`, `esp_driver_gpio`
+- `PRIV_REQUIRES`: `fatfs`, `sdmmc`, `vfs`, `log`, `freertos`
 
 ---
 
@@ -41,17 +41,20 @@ components/blackbox_storage/
 
 | Fungsi | Kegunaan | Nilai Balik Utama |
 |---|---|---|
-| `bb_storage_init(cfg)` | Validasi konfigurasi, opsional init SPI bus, dan mount FATFS di `cfg->mount_point` | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_STATE`, `ESP_FAIL` |
-| `bb_storage_deinit()` | Unmount FATFS (`esp_vfs_fat_sdcard_unmount`) dan bebas bus SPI jika `manage_spi_bus == true` | `ESP_OK`, `ESP_ERR_INVALID_STATE` |
-| `bb_storage_get_status()` | Mengambil status komponen saat ini (`UNINITIALIZED`, `READY`, `MOUNT_FAILED`, `WRITE_ERROR`, `FULL`) | `bb_storage_status_t` |
-| `bb_storage_get_stats(out)` | Mengambil statistik jumlah event tertulis, gagal, ukuran file terakhir, dan kapasitas total/bebas FAT | `ESP_OK`, `ESP_ERR_INVALID_ARG` |
-| `bb_storage_validate_event(ev)` | Memeriksa validitas pointer, versi format, batas `event_id`, dan jumlah sampel (`1..2048`) | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_SIZE` |
+| `bb_storage_init(cfg)` | Validasi konfigurasi (`host_id`, GPIO ESP32-S3, `ESP_VFS_PATH_MAX` <= 15 char di target), opsional init SPI bus, & mount FATFS | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_STATE`, `ESP_FAIL` |
+| `bb_storage_deinit()` | Unmount FATFS; menjaga status & kepemilikan bus bila unmount gagal agar bisa retry, lalu bebas bus SPI jika `manage_spi_bus == true` | `ESP_OK`, `ESP_ERR_INVALID_STATE`, `ESP_FAIL` |
+| `bb_storage_get_status()` | Mengambil status saat ini secara *lock-free/atomic* tanpa terblokir I/O SD (`UNINITIALIZED`, `READY`, `MOUNT_FAILED`, `WRITE_ERROR`, `FULL`) | `bb_storage_status_t` |
+| `bb_storage_status_to_str(status)` | Konversi enum `bb_storage_status_t` menjadi teks status | `const char *` |
+| `bb_storage_get_stats(out)` | Mengambil statistik tulis, ukuran terakhir, dan kapasitas total/bebas FAT (direset `0` bila belum mounted) | `ESP_OK`, `ESP_ERR_INVALID_ARG` |
+| `bb_storage_validate_event(ev)` | Memeriksa pointer, `format_version`, rentang `event_id`, `sample_count` (`1..2048`), dan batas `pre + post` bebas overflow | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_SIZE` |
+| `bb_storage_compute_samples_crc32(...)` | Menghitung checksum IEEE 802.3 CRC-32 secara deterministik terhadap array sampel | `uint32_t` |
+| `bb_storage_build_event_paths(...)` | Membangun pasangan path 8.3 `<mount>/E<7-hex>.TMP` dan `.CSV` | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_SIZE` |
 | `bb_storage_format_event_csv(...)` | Serialisasi `bb_event_record_t` ke buffer memori dalam format CSV `v1` + CRC-32 | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_SIZE` |
-| `bb_storage_write_event(ev, ...)` | Menulis event ke `<mount>/E<id>.TMP`, flush/sync, close, lalu rename ke `<mount>/E<id>.CSV` | `ESP_OK`, `ESP_ERR_INVALID_STATE`, `ESP_ERR_NO_MEM`, `ESP_FAIL` |
-| `bb_storage_verify_event_file(...)` | Membaca ulang file CSV, memeriksa header, `# END_EVENT`, jumlah baris, dan menghitung ulang CRC-32 | `ESP_OK`, `ESP_ERR_NOT_FOUND`, `ESP_ERR_INVALID_CRC`, `ESP_FAIL` |
-| `bb_storage_list_completed_events(...)` | Mengambil daftar nama file event yang sudah selesai (`E*.CSV`) dan mengabaikan file `.TMP` | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_STATE`, `ESP_FAIL` |
-| `bb_storage_is_completed_event_filename(name)` | Predikat filter untuk memeriksa apakah nama file berformat `E<7-hex>.CSV` | `true` / `false` |
-| `bb_storage_self_test()` | Uji tulis, verifikasi baca-balik CRC-32, dan hapus file uji sintetis pada microSD | `ESP_OK` atau kode error |
+| `bb_storage_write_event(ev, ...)` | Menulis event ke `.TMP`, `fflush` + `fsync` + `fclose`, lalu `rename` ke `.CSV` (mengizinkan pemulihan setelah `FULL`/`WRITE_ERROR`) | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_SIZE`, `ESP_ERR_INVALID_STATE`, `ESP_ERR_NO_MEM`, `ESP_FAIL` |
+| `bb_storage_verify_event_file(...)` | Parser ketat CSV `v1`: cek header metadata, header kolom, urutan indeks, batas integer 32/64-bit, `# END_EVENT`, tidak ada baris pasca-footer, dan CRC-32 | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_NOT_FOUND`, `ESP_ERR_INVALID_CRC`, `ESP_FAIL` |
+| `bb_storage_list_completed_events(...)` | Mengambil daftar nama file event selesai (`E*.CSV`) dan menyaring direktori, file `.TMP`, serta `BBTEST00.CSV` | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_STATE`, `ESP_FAIL` |
+| `bb_storage_is_completed_event_filename(name)` | Predikat filter untuk memeriksa apakah basename berformat `E<7-hex-uppercase>.CSV` (`id != 0`) | `true` / `false` |
+| `bb_storage_self_test()` | Uji tulis/verifikasi/hapus non-destruktif atomik memakai file khusus internal `BBTEST00.TMP` -> `BBTEST00.CSV` | `ESP_OK` atau kode error |
 
 ---
 
@@ -79,8 +82,10 @@ sample_idx,timestamp_us,offset_ms,sensor,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_md
 1,5010000,-10,2,18,-22,1004,0,0,0
 2,5020000,0,1,2940,-510,1250,1450,320,-90
 3,5030000,10,2,410,-95,1015,0,0,0
-# END_EVENT,count=4,crc32=0x90C76B22
+# END_EVENT,count=4,crc32=0x10BF5ABE
 ```
+
+*(Ukuran contoh berkas ini adalah `441 bytes` dengan akhiran baris LF, dapat diverifikasi langsung via `bb_storage_verify_event_file()`.)*
 
 ---
 
@@ -114,4 +119,4 @@ Implementasi komponen ini ditulis dari awal sebagai modul C khusus untuk proyek 
 2. **Operasi Sinkron (Blocking I/O):**  
    `bb_storage_write_event()` melakukan operasi I/O SPI yang dapat memakan waktu puluhan hingga ratusan milidetik tergantung latensi kartu microSD. **Jangan pernah memanggil fungsi ini dari ISR atau task akuisisi sensor 100 Hz.** Panggil dari task penyimpanan berprioritas lebih rendah yang menerima snapshot event melalui FreeRTOS Queue.
 3. **Berbagi Bus SPI dengan ADXL345:**  
-   Jika microSD dan ADXL345 berbagi satu bus SPI (`SPI2_HOST`), seluruh pin CS perangkat lain pada bus tersebut wajib ditahan *HIGH* (inaktif) sebelum kartu microSD diinisialisasi ke mode SPI oleh `esp_vfs_fat_sdspi_mount()`.
+   Jika microSD dan ADXL345 berbagi satu bus SPI (`SPI2_HOST`), seluruh pin CS perangkat lain pada bus tersebut wajib ditahan *HIGH* (inaktif) sebelum kartu microSD diinisialisasi ke mode SPI oleh `esp_vfs_fat_sdspi_mount()`. Selain itu, pemilik bus eksternal (`manage_spi_bus = false`) wajib menginisialisasi bus dengan DMA aktif dan `max_transfer_sz >= 4000`, serta menjaga `mount_point` tidak melebihi batas VFS ESP-IDF (`ESP_VFS_PATH_MAX = 15`).

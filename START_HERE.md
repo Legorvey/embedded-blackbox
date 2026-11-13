@@ -1,46 +1,32 @@
 # START HERE — Embedded Black Box / Storage
 
-> **Untuk anggota yang menangani Storage.** Paket ini adalah **panduan dan bahan awal**, **belum firmware yang sudah berjalan**. Dibuat dari PPT dosen, brief ketua, dan PDF kompilasi percakapan/instruksi. Jangan menyebut build/hardware sudah lulus sebelum diuji.
+> **Untuk pemilik komponen `blackbox_storage`.** Repositori ini (`https://github.com/Legorvey/embedded-blackbox.git`) sudah berisi implementasi komponen `components/blackbox_storage/`, suite pengujian host/cross-compile di `tests/`, bukti verifikasi di `evidence/`, serta dokumentasi teknis di `docs/`. Tetap jaga kejujuran status pengujian: **jangan mengklaim full `idf.py build` firmware atau pengujian hardware microSD fisik sudah lulus sebelum benar-benar dijalankan.**
 
-## Urutan praktis untuk kamu
+## Urutan praktis untuk mempelajari & melanjutkan repo ini
 
-1. **Buka project ESP-IDF yang sudah ada** di VS Code/Antigravity. Pastikan ada `CMakeLists.txt` root. **Jangan buat project ESP-IDF kedua di dalam project pertama.** Jika project ESP-IDF belum ada, minta kode project dari ketua atau biarkan agent membuat scaffold minimal dengan persetujuan.
-2. Tempatkan **isi** paket ini pada **root project/repository** yang sama. Jika nama file sama, **bandingkan dulu** dan jangan overwrite versi ketua.
-3. Baca `docs/00-PETA-KONTEKS.md` dan `docs/01-STORAGE-TUGAS-GUE.md` (10–15 menit).
-4. Periksa `docs/05-KEPUTUSAN-DAN-PERTANYAAN.md`, terutama versi ESP-IDF, pin SPI, serta pembagian bus dengan ADXL345. Yang belum diputuskan harus berstatus *TODO*, bukan dikarang.
-5. Buka Antigravity di **root project**. Tempel seluruh isi `prompts/ANTIGRAVITY-STORAGE-MASTER.md`. Minta agent menjalankan **Fase 0 → Fase 1** dulu. Untuk perubahan file/firmware, agent harus bisa menjelaskan apa yang dibuat dan mana yang sudah diuji.
-6. Setelah ada hasil nyata, isi `docs/03-PENGUJIAN-DAN-BUKTI.md` dan `docs/04-HANDOFF-PRESENTASI.md` dengan **bukti sebenarnya** (build log, foto hardware, hasil baca file). Sebelum Senin, kirim link GitHub dan rangkuman singkat ke ketua.
-
-## Bikin GitHub baru (satu repo untuk satu kelompok)
-
-1. GitHub → **New repository** → `embedded-blackbox` → **Private**. Jangan tambah README/.gitignore/license dari web jika project lokal sudah berisi file supaya tidak memicu konflik awal.
-2. Pastikan kamu berada di **root ESP-IDF project**, bukan folder acak berisi dokumen saja.
-3. Jika BELUM ada `.git/`:
-
-   ```bash
-   git init -b main
-   git add .
-   git commit -m "docs: initialize embedded blackbox context"
-   git remote add origin https://github.com/USERNAME/embedded-blackbox.git
-   git push -u origin main
-   git switch -c feat/storage
+1. **Pahami batas ruang lingkup & keamanan** di [`AGENTS.md`](AGENTS.md) dan [`README.md`](README.md).
+2. **Baca dokumentasi komponen & tim** (15–20 menit):
+   - [`docs/00-PETA-KONTEKS.md`](docs/00-PETA-KONTEKS.md) — sumber tugas dosen vs rancangan kelompok.
+   - [`docs/01-STORAGE-TUGAS-GUE.md`](docs/01-STORAGE-TUGAS-GUE.md) — scope kerja & status milestone `S0–S4`.
+   - [`docs/02-KONTRAK-INTEGRASI.md`](docs/02-KONTRAK-INTEGRASI.md) — kontrak API ke `blackbox_core` & `blackbox_interface`.
+   - [`docs/06-BELAJAR-STORAGE.md`](docs/06-BELAJAR-STORAGE.md) — materi belajar SPI, SDSPI, FATFS, mutex FreeRTOS, dan alur `.TMP` -> `.CSV`.
+3. **Jalankan verifikasi lokal** kapan saja melalui PowerShell di root proyek:
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run_tests.ps1
    ```
+   Perintah ini memverifikasi kompilasi objek target `esp32s3` (`xtensa-esp32s3-elf-gcc` + header ESP-IDF v5.4) serta **8 suite unit, fault-injection, & concurrency test** di host.
+4. **Cek pertanyaan integrasi yang masih terbuka** di [`docs/05-KEPUTUSAN-DAN-PERTANYAAN.md`](docs/05-KEPUTUSAN-DAN-PERTANYAAN.md) sebelum sinkronisasi dengan Core, ADXL345 (`blackbox_imu_spi`), dan Interface.
+5. **Saat presentasi / handoff** ke ketua tim, gunakan rangkuman di [`docs/04-HANDOFF-PRESENTASI.md`](docs/04-HANDOFF-PRESENTASI.md) dan bukti terverifikasi di [`docs/03-PENGUJIAN-DAN-BUKTI.md`](docs/03-PENGUJIAN-DAN-BUKTI.md).
 
-   Ganti `USERNAME`; jalankan `git status` dan periksa file staged sebelum commit. Jika sudah ada Git, **jangan ulang `git init`**: periksa `git remote -v`, branch, lalu sambungkan ke remote yang tepat.
-4. Undang anggota lewat Settings → Collaborators; **jangan kirim password/token**. Untuk kerja berikutnya: branch fitur → commit → push → PR ke `main`; jangan semua orang push langsung ke `main`.
-5. Jangan unggah screenshot chat grup atau dokumen yang mengandung data pribadi tanpa persetujuan. Rangkuman teknis disediakan di `docs/00-PETA-KONTEKS.md`.
+## Alur kerja Git (repo sudah aktif)
 
-## Yang harus diserahkan paling tidak
-
-- Folder `components/blackbox_storage/` berisi **kode nyata** (`include/*.h`, `.c`, `CMakeLists.txt`) setelah agent mengimplementasikannya; saat ini hanya README placeholder.
-- README penggunaan API dan deskripsi referensi/upstream, versi, serta perubahan dari baseline.
-- Build log **jika benar telah dijalankan**, atau label jelas `BELUM DIUJI`.
-- Bukti tes SD card (mount/tulis/baca/error), atau hambatan hardware yang benar-benar ada.
-- `docs/04-HANDOFF-PRESENTASI.md` agar ketua bisa menjelaskan bagianmu saat kamu tidak hadir.
+- Repositori Git sudah diinisialisasi dan tersambung ke `origin` (`https://github.com/Legorvey/embedded-blackbox.git`). **Jangan menjalankan `git init` ulang.**
+- Gunakan branch fitur (misal `feat/blackbox-storage-hardening`) dan commit kecil per tujuan dengan format Conventional Commits.
+- **Jangan pernah commit** file PDF materi pribadi, screenshot WhatsApp, kredensial, ataupun artefak build (`build/`, `build_test_host/`, `*.o`, `*.exe`). Aturan pengecualian sudah diatur di [`.gitignore`](.gitignore).
 
 ## Jangan sampai lupa
 
 - **VS Code = editor**; **ESP-IDF = framework + build tools + driver**; **FreeRTOS = task scheduler**; **GitHub = kolaborasi/riwayat kode**.
-- Jangan `format_if_mount_failed = true` tanpa izin, karena dapat menghapus data SD.
-- Jangan menebak GPIO atau model ESP32-S3. Jangan menjanjikan anti-korupsi SD saat power loss.
-- Lihat `source_refs/README.md` untuk referensi resmi.
+- `format_if_mount_failed` **wajib tetap `false`** (`bb_storage_init()` menolak `true` dengan `ESP_ERR_INVALID_ARG`).
+- Pin GPIO default sengaja disetel `GPIO_NUM_NC` (`-1`) sampai pinout board ESP32-S3 fisik dikonfirmasi bersama tim.
+- Lihat [`source_refs/README.md`](source_refs/README.md) untuk daftar referensi resmi ESP-IDF `v5.4`.

@@ -99,13 +99,13 @@ Sesuai instruksi dosen (*"buat library sendiri dengan menyiapkan file header `.h
    idf_component_register(
        SRCS "blackbox_storage.c"
        INCLUDE_DIRS "include"
-       REQUIRES fatfs sdmmc esp_driver_sdspi esp_driver_spi esp_driver_gpio vfs
-       PRIV_REQUIRES log freertos
+       REQUIRES esp_driver_sdspi esp_driver_spi esp_driver_gpio
+       PRIV_REQUIRES fatfs sdmmc vfs log freertos
    )
    ```
    - `SRCS`: memberi tahu compiler file `.c` mana yang harus dikompilasi.
    - `INCLUDE_DIRS`: memberi tahu bahwa folder `include/` berisi header publik (`blackbox_storage.h`).
-   - `REQUIRES` & `PRIV_REQUIRES`: memberi tahu ESP-IDF driver bawaan apa saja yang dibutuhkan oleh komponenmu (seperti `fatfs`, `sdmmc`, `esp_driver_sdspi`, `freertos`, dan `log`).
+   - `REQUIRES` & `PRIV_REQUIRES`: memberi tahu ESP-IDF driver yang dipakai di header publik (`esp_driver_sdspi`, `esp_driver_spi`, `esp_driver_gpio`) serta dependensi internal di `.c` (`fatfs`, `sdmmc`, `vfs`, `log`, `freertos`).
 
 ---
 
@@ -155,13 +155,13 @@ Ketika `blackbox_core` mendeteksi guncangan/benturan, Core memanggil `bb_storage
    ...
    0,5000000,-20,1,10,-15,998,100,-30,10
    ...
-   # END_EVENT,count=4,crc32=0x90C76B22
+   # END_EVENT,count=4,crc32=0x10BF5ABE
          │
-         ├──► Jika gagal di tengah jalan (misal SD penuh / error I/O):
+         ├──► Jika gagal di tengah jalan (misal SD penuh / error I/O / gagal fsync):
          │    Tutup file -> Hapus /sdcard/E0000001.TMP -> Set status FULL/WRITE_ERROR
          ▼
 5. Jika semua baris berhasil ditulis:
-   fflush(fp) -> fsync(fileno(fp)) -> fclose(fp)
+   fflush(fp) -> fsync(fileno(fp)) -> fclose(fp) (setiap langkah wajib sukses!)
          │
          ▼
 6. Ubah nama file (rename):
@@ -180,7 +180,7 @@ Di sistem tertanam nyata, penyimpanan microSD sering mengalami gangguan. Berikut
 1. **Kartu SD Lupa Dipasang atau Kabel Longgar Saat Boot:**  
    `esp_vfs_fat_sdspi_mount()` akan mengembalikan kode error. Fungsi `bb_storage_init()` menangkapnya, membatalkan inisialisasi bus SPI (`spi_bus_free`), menyetel status ke `BB_STORAGE_STATUS_MOUNT_FAILED`, dan mengembalikan kode error ke Core sehingga ESP32-S3 **tidak crash/reboot berulang-ulang**.
 2. **Kartu SD Penuh Saat Menulis (`ENOSPC`):**  
-   `fprintf()` atau `fflush()` akan gagal. Kode kita melompat ke label `cleanup_error:`, menutup file, menghapus file `.TMP` yang belum selesai supaya tidak menyampah di kartu SD, dan mengubah status ke `BB_STORAGE_STATUS_FULL` (`ESP_ERR_NO_MEM`).
+   `fputs()`, `fflush()`, `fsync()`, `fclose()`, atau `rename()` akan gagal. Kode kita langsung menyimpan `errno` sebelum logging, melompat ke label `cleanup_error:`, menutup file, menghapus file `.TMP` supaya tidak menyampah, dan mengubah status ke `BB_STORAGE_STATUS_FULL` (`ESP_ERR_NO_MEM`) atau `WRITE_ERROR` (`ESP_FAIL`).
 3. **Listrik Mati Mendadak Saat Menulis (Power Loss):**  
    Jika baterai/kabel USB dicabut paksa tepat saat kartu SD sedang menulis:
    - Jika putus sebelum `rename()`, file masih bernama `.TMP` sehingga tidak akan dianggap sebagai rekaman sah oleh `blackbox_interface`.
@@ -200,7 +200,7 @@ Mengapa?
 - Oleh karena itu:
   1. **Task Sensor / Core (Prioritas Tinggi):** Membaca sensor, mendeteksi benturan, lalu menaruh paket data event ke dalam **FreeRTOS Queue**. Task ini **dilarang keras** memanggil `bb_storage_write_event()` secara langsung.
   2. **Task Penyimpanan / Writer Task di Core (Prioritas Rendah):** Menunggu kiriman data dari Queue, lalu memanggil `bb_storage_write_event()` yang sifatnya sinkron (*blocking*). Sementara task penyimpanan menunggu kartu SD selesai menulis, FreeRTOS tetap bisa menjalankan task sensor 100 Hz tanpa terganggu!
-  3. **Mutex Internal di `blackbox_storage` (`s_ctx.mutex`):** Di dalam `blackbox_storage.c`, kita memakai `xSemaphoreCreateMutex()`, `xSemaphoreTake()`, dan `xSemaphoreGive()` di dalam `bb_lock()` dan `bb_unlock()`. Gunanya: kalau task HTTP (`blackbox_interface`) memanggil `bb_storage_list_completed_events()` bersamaan saat task penyimpanan sedang memanggil `bb_storage_write_event()`, keduanya akan mengantre dengan tertib dan tidak bertabrakan.
+  3. **Mutex Statis & Status Lock-Free (`s_ctx.mutex`, `status_atomic`):** Di dalam [`blackbox_storage.c`](../components/blackbox_storage/blackbox_storage.c), mutex dibuat secara statis dengan `xSemaphoreCreateMutexStatic()` (dilindungi critical section `portMUX_TYPE`) tanpa alokasi heap, dan fungsi `bb_storage_get_status()` memakai operasi atomik agar task UI/Interface tidak ikut macet saat kartu SD sedang menulis. Selain itu, `bb_storage_self_test()` mengunci mutex secara utuh dan memakai berkas internal `BBTEST00.TMP`/`BBTEST00.CSV` agar tidak pernah bertabrakan dengan file event asli.
 
 ---
 
@@ -213,5 +213,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run_tests.ps1
 ```
 
 Apa yang dilakukan perintah itu?
-1. **Step 1 (Cross-Compile ESP32-S3):** Memanggil compiler resmi `xtensa-esp32s3-elf-gcc` (GCC 14.2.0) untuk mengompilasi `blackbox_storage.c` dan `main.c` menggunakan header asli **ESP-IDF v5.4 (`esp32s3`)** dengan aturan super ketat `-Wall -Wextra -Werror` (semua peringatan dianggap error). Hasilnya: **PASS (0 warnings, 0 errors)**.
-2. **Step 2 (Host Unit & Fault-Injection Tests):** Mengompilasi `blackbox_storage.c` bersama [`tests/test_blackbox_storage_host.c`](../tests/test_blackbox_storage_host.c) menjadi program `.exe` di Windows dan menjalankan 7 skenario pengujian otomatis (mulai dari uji salah pin, gagal mount, pembuatan CSV + CRC-32, deteksi file korup, sampai simulasi SD card penuh). Hasilnya: **Summary: 7/7 passed, 0 failed**.
+1. **Step 1 (Cross-Compile Objek ESP32-S3):** Memanggil compiler resmi `xtensa-esp32s3-elf-gcc` (GCC 14.2.0) untuk mengompilasi `blackbox_storage.c` dan `main.c` menggunakan header asli **ESP-IDF v5.4 (`esp32s3`)** dengan aturan super ketat `-Wall -Wextra -Werror` (semua peringatan dianggap error). Hasilnya: **PASS (0 warnings, 0 errors)**. *(Catatan: ini masih kompilasi `.o`; full link `.elf`/`.bin` via `idf.py build` berstatus NOT RUN karena `idf.py` standalone belum terpasang.)*
+2. **Step 2 (Host Unit, Fault-Injection & Concurrency Tests):** Mengompilasi `blackbox_storage.c` bersama [`tests/test_blackbox_storage_host.c`](../tests/test_blackbox_storage_host.c) menggunakan **MinGW GCC 4.9.2 (`-std=gnu11 -Wall -Wextra -Werror`)** dan **MATLAB `lcc64`**, lalu menjalankan **8 kelompok uji otomatis** (konfigurasi & pin ESP32-S3, lifecycle & unmount gagal, validasi input & overflow, path 8.3, serialisasi CSV + golden CRC `0x10BF5ABE`, deteksi korupsi/overflow CSV/2048 sampel/CRLF, 11 titik injeksi fault & filter direktori, serta stress test konkurensi 4 thread). Hasilnya: **Summary: 8/8 passed, 0 failed** pada kedua compiler host.
