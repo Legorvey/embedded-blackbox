@@ -28,6 +28,7 @@
 #include <sys/stat.h>
 #include <sys/unistd.h>
 #include "esp_log.h"
+#include "esp_vfs.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "freertos/FreeRTOS.h"
@@ -39,10 +40,16 @@ static const char *TAG = "bb_storage";
 #define BB_LOGE(fmt, ...) ESP_LOGE(TAG, fmt, ##__VA_ARGS__)
 #else
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include <direct.h>
 #include <io.h>
+#include <sys/stat.h>
 #else
 #include <dirent.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -79,7 +86,8 @@ static void bb_host_log_err(const char *fmt, ...)
     fprintf(stderr, "\n");
 }
 
-static bb_storage_test_faults_t s_test_faults;
+static bb_storage_test_faults_t   s_test_faults;
+static bb_storage_test_counters_t s_test_counters;
 
 void bb_storage_test_set_faults(const bb_storage_test_faults_t *faults)
 {
@@ -91,8 +99,16 @@ void bb_storage_test_set_faults(const bb_storage_test_faults_t *faults)
 void bb_storage_test_reset_faults(void)
 {
     memset(&s_test_faults, 0, sizeof(s_test_faults));
+    memset(&s_test_counters, 0, sizeof(s_test_counters));
     s_test_faults.mock_total_bytes = 16ULL * 1024ULL * 1024ULL;
     s_test_faults.mock_free_bytes  = 12ULL * 1024ULL * 1024ULL;
+}
+
+void bb_storage_test_get_counters(bb_storage_test_counters_t *out_counters)
+{
+    if (out_counters != NULL) {
+        *out_counters = s_test_counters;
+    }
 }
 #endif /* BB_STORAGE_HOST_TEST */
 
@@ -106,29 +122,120 @@ typedef struct {
     char                mount_point[BB_STORAGE_MAX_MOUNT_PATH_LEN + 1U];
     bb_storage_config_t config;
     bb_storage_stats_t  stats;
+#if defined(__GNUC__) || defined(__clang__)
+    int                 status_atomic;
+#else
+    volatile int        status_atomic;
+#endif
 #ifndef BB_STORAGE_HOST_TEST
     sdmmc_card_t       *card;
+    StaticSemaphore_t   mutex_buf;
     SemaphoreHandle_t   mutex;
 #endif
 } bb_storage_ctx_t;
 
 static bb_storage_ctx_t s_ctx;
 
+#ifndef BB_STORAGE_HOST_TEST
+static portMUX_TYPE s_mutex_init_spinlock = portMUX_INITIALIZER_UNLOCKED;
+
+static void bb_ensure_mutex(void)
+{
+    if (s_ctx.mutex == NULL) {
+        portENTER_CRITICAL(&s_mutex_init_spinlock);
+        if (s_ctx.mutex == NULL) {
+            s_ctx.mutex = xSemaphoreCreateMutexStatic(&s_ctx.mutex_buf);
+        }
+        portEXIT_CRITICAL(&s_mutex_init_spinlock);
+    }
+}
+
 static void bb_lock(void)
 {
-#ifndef BB_STORAGE_HOST_TEST
+    bb_ensure_mutex();
     if (s_ctx.mutex != NULL) {
         (void)xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
     }
-#endif
 }
 
 static void bb_unlock(void)
 {
-#ifndef BB_STORAGE_HOST_TEST
     if (s_ctx.mutex != NULL) {
         (void)xSemaphoreGive(s_ctx.mutex);
     }
+}
+#elif defined(_WIN32)
+#if defined(__GNUC__) || defined(__clang__)
+static int s_win_mutex_state = 0; /* 0=uninit, 1=initing, 2=ready */
+#else
+static bool s_win_mutex_ready = false;
+#endif
+static CRITICAL_SECTION s_win_cs;
+
+static void bb_ensure_mutex(void)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    int expected = 0;
+    if (__atomic_load_n(&s_win_mutex_state, __ATOMIC_ACQUIRE) == 2) {
+        return;
+    }
+    if (__atomic_compare_exchange_n(&s_win_mutex_state, &expected, 1,
+                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        InitializeCriticalSection(&s_win_cs);
+        __atomic_store_n(&s_win_mutex_state, 2, __ATOMIC_RELEASE);
+    } else {
+        while (__atomic_load_n(&s_win_mutex_state, __ATOMIC_ACQUIRE) != 2) {
+            Sleep(0);
+        }
+    }
+#else
+    if (!s_win_mutex_ready) {
+        InitializeCriticalSection(&s_win_cs);
+        s_win_mutex_ready = true;
+    }
+#endif
+}
+
+static void bb_lock(void)
+{
+    bb_ensure_mutex();
+    EnterCriticalSection(&s_win_cs);
+}
+
+static void bb_unlock(void)
+{
+    LeaveCriticalSection(&s_win_cs);
+}
+#else
+static pthread_mutex_t s_posix_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void bb_lock(void)
+{
+    (void)pthread_mutex_lock(&s_posix_mutex);
+}
+
+static void bb_unlock(void)
+{
+    (void)pthread_mutex_unlock(&s_posix_mutex);
+}
+#endif
+
+static void bb_set_status(bb_storage_status_t status)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __atomic_store_n(&s_ctx.status_atomic, (int)status, __ATOMIC_RELEASE);
+#else
+    s_ctx.status_atomic = (int)status;
+#endif
+    s_ctx.stats.status = status;
+}
+
+static bb_storage_status_t bb_get_status_atomic(void)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    return (bb_storage_status_t)__atomic_load_n(&s_ctx.status_atomic, __ATOMIC_ACQUIRE);
+#else
+    return (bb_storage_status_t)s_ctx.status_atomic;
 #endif
 }
 
@@ -271,21 +378,61 @@ uint32_t bb_storage_compute_samples_crc32(const bb_storage_sample_t *samples, si
 static bool is_valid_mount_point(const char *mount_point)
 {
     size_t len;
+    size_t i;
+    size_t max_len = BB_STORAGE_MAX_MOUNT_PATH_LEN;
+
     if (mount_point == NULL) {
         return false;
     }
     len = strlen(mount_point);
-    if (len < 2U || len > BB_STORAGE_MAX_MOUNT_PATH_LEN) {
+#ifndef BB_STORAGE_HOST_TEST
+    if ((size_t)ESP_VFS_PATH_MAX < max_len) {
+        max_len = (size_t)ESP_VFS_PATH_MAX;
+    }
+    if (mount_point[0] != '/') {
         return false;
     }
-    /* Reject trailing slash and path traversal sequences */
+#else
+    if (!(mount_point[0] == '/' || (len >= 3U && strncmp(mount_point, "./", 2U) == 0))) {
+        return false;
+    }
+#endif
+    if (len < 2U || len > max_len) {
+        return false;
+    }
+    /* Reject trailing slash, backslashes, duplicate slashes, traversal, or control/whitespace */
     if (mount_point[len - 1U] == '/' || mount_point[len - 1U] == '\\') {
         return false;
     }
-    if (strstr(mount_point, "..") != NULL) {
+    if (strstr(mount_point, "..") != NULL || strstr(mount_point, "//") != NULL) {
+        return false;
+    }
+    for (i = 0U; i < len; i++) {
+        unsigned char c = (unsigned char)mount_point[i];
+        if (c == '\\' || iscntrl(c) || isspace(c)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool is_valid_esp32s3_gpio(gpio_num_t pin, bool output_required)
+{
+#ifndef BB_STORAGE_HOST_TEST
+    if (output_required) {
+        return GPIO_IS_VALID_OUTPUT_GPIO(pin);
+    }
+    return GPIO_IS_VALID_GPIO(pin);
+#else
+    (void)output_required;
+    if (pin < 0 || pin >= 49) {
+        return false;
+    }
+    if (pin >= 22 && pin <= 25) {
         return false;
     }
     return true;
+#endif
 }
 
 static esp_err_t validate_config(const bb_storage_config_t *cfg)
@@ -294,8 +441,13 @@ static esp_err_t validate_config(const bb_storage_config_t *cfg)
         return ESP_ERR_INVALID_ARG;
     }
     if (!is_valid_mount_point(cfg->mount_point)) {
-        BB_LOGE("Invalid mount_point (must be non-empty, <= %u chars, no trailing slash)",
+        BB_LOGE("Invalid mount_point (must start with '/', <= %u chars, no trailing slash)",
                 (unsigned)BB_STORAGE_MAX_MOUNT_PATH_LEN);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (cfg->host_id < SPI2_HOST || cfg->host_id >= SPI_HOST_MAX) {
+        BB_LOGE("Invalid SPI host_id (%d); expected SPI2_HOST (%d) or SPI3_HOST (%d)",
+                (int)cfg->host_id, (int)SPI2_HOST, (int)SPI3_HOST);
         return ESP_ERR_INVALID_ARG;
     }
     if (cfg->format_if_mount_failed) {
@@ -310,13 +462,20 @@ static esp_err_t validate_config(const bb_storage_config_t *cfg)
         BB_LOGE("max_freq_khz (%d) out of range (1..40000)", cfg->max_freq_khz);
         return ESP_ERR_INVALID_ARG;
     }
-    if (cfg->gpio_cs < 0) {
-        BB_LOGE("gpio_cs is not configured (GPIO_NUM_NC). Set verified CS pin before init");
+    if (cfg->gpio_cs < 0 || !is_valid_esp32s3_gpio(cfg->gpio_cs, true)) {
+        BB_LOGE("gpio_cs (%d) is not configured or invalid for ESP32-S3 output", (int)cfg->gpio_cs);
         return ESP_ERR_INVALID_ARG;
     }
     if (cfg->manage_spi_bus) {
         if (cfg->gpio_mosi < 0 || cfg->gpio_miso < 0 || cfg->gpio_sclk < 0) {
             BB_LOGE("SPI pins (MOSI=%d, MISO=%d, SCLK=%d) must be configured when manage_spi_bus=true",
+                    (int)cfg->gpio_mosi, (int)cfg->gpio_miso, (int)cfg->gpio_sclk);
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (!is_valid_esp32s3_gpio(cfg->gpio_mosi, true) ||
+            !is_valid_esp32s3_gpio(cfg->gpio_miso, false) ||
+            !is_valid_esp32s3_gpio(cfg->gpio_sclk, true)) {
+            BB_LOGE("Invalid ESP32-S3 GPIO pin in SPI config (MOSI=%d, MISO=%d, SCLK=%d)",
                     (int)cfg->gpio_mosi, (int)cfg->gpio_miso, (int)cfg->gpio_sclk);
             return ESP_ERR_INVALID_ARG;
         }
@@ -327,6 +486,19 @@ static esp_err_t validate_config(const bb_storage_config_t *cfg)
             cfg->gpio_miso == cfg->gpio_cs ||
             cfg->gpio_sclk == cfg->gpio_cs) {
             BB_LOGE("Duplicate GPIO pin assignment detected in SPI configuration");
+            return ESP_ERR_INVALID_ARG;
+        }
+    } else {
+        if ((cfg->gpio_mosi >= 0 && !is_valid_esp32s3_gpio(cfg->gpio_mosi, true)) ||
+            (cfg->gpio_miso >= 0 && !is_valid_esp32s3_gpio(cfg->gpio_miso, false)) ||
+            (cfg->gpio_sclk >= 0 && !is_valid_esp32s3_gpio(cfg->gpio_sclk, true))) {
+            BB_LOGE("Optional SPI pin out of valid ESP32-S3 GPIO range");
+            return ESP_ERR_INVALID_ARG;
+        }
+        if ((cfg->gpio_mosi >= 0 && cfg->gpio_mosi == cfg->gpio_cs) ||
+            (cfg->gpio_miso >= 0 && cfg->gpio_miso == cfg->gpio_cs) ||
+            (cfg->gpio_sclk >= 0 && cfg->gpio_sclk == cfg->gpio_cs)) {
+            BB_LOGE("gpio_cs collides with configured SPI bus pin");
             return ESP_ERR_INVALID_ARG;
         }
     }
@@ -519,31 +691,25 @@ esp_err_t bb_storage_format_event_csv(const bb_event_record_t *event,
 esp_err_t bb_storage_init(const bb_storage_config_t *cfg)
 {
     esp_err_t err;
+    bool bus_initialized_here = false;
+
+    bb_lock();
 
     if (s_ctx.initialized) {
         BB_LOGW("bb_storage_init called while already initialized");
+        bb_unlock();
         return ESP_ERR_INVALID_STATE;
     }
 
     err = validate_config(cfg);
     if (err != ESP_OK) {
-        s_ctx.stats.status = BB_STORAGE_STATUS_UNINITIALIZED;
+        bb_set_status(BB_STORAGE_STATUS_UNINITIALIZED);
         s_ctx.stats.last_error = err;
+        bb_unlock();
         return err;
     }
 
 #ifndef BB_STORAGE_HOST_TEST
-    if (s_ctx.mutex == NULL) {
-        s_ctx.mutex = xSemaphoreCreateMutex();
-        if (s_ctx.mutex == NULL) {
-            s_ctx.stats.last_error = ESP_ERR_NO_MEM;
-            return ESP_ERR_NO_MEM;
-        }
-    }
-
-    bb_lock();
-
-    bool bus_initialized_here = false;
     if (cfg->manage_spi_bus) {
         /*
          * Initialize SPI bus for SDSPI.
@@ -556,12 +722,16 @@ esp_err_t bb_storage_init(const bb_storage_config_t *cfg)
         bus_cfg.sclk_io_num = cfg->gpio_sclk;
         bus_cfg.quadwp_io_num = -1;
         bus_cfg.quadhd_io_num = -1;
+        bus_cfg.data4_io_num = -1;
+        bus_cfg.data5_io_num = -1;
+        bus_cfg.data6_io_num = -1;
+        bus_cfg.data7_io_num = -1;
         bus_cfg.max_transfer_sz = 4000;
 
         err = spi_bus_initialize(cfg->host_id, &bus_cfg, SDSPI_DEFAULT_DMA);
         if (err != ESP_OK) {
             BB_LOGE("spi_bus_initialize(host=%d) failed: 0x%x", (int)cfg->host_id, (unsigned)err);
-            s_ctx.stats.status = BB_STORAGE_STATUS_MOUNT_FAILED;
+            bb_set_status(BB_STORAGE_STATUS_MOUNT_FAILED);
             s_ctx.stats.last_error = err;
             bb_unlock();
             return err;
@@ -597,7 +767,7 @@ esp_err_t bb_storage_init(const bb_storage_config_t *cfg)
         if (bus_initialized_here) {
             (void)spi_bus_free(cfg->host_id);
         }
-        s_ctx.stats.status = BB_STORAGE_STATUS_MOUNT_FAILED;
+        bb_set_status(BB_STORAGE_STATUS_MOUNT_FAILED);
         s_ctx.stats.last_error = err;
         bb_unlock();
         return err;
@@ -607,22 +777,64 @@ esp_err_t bb_storage_init(const bb_storage_config_t *cfg)
     s_ctx.spi_bus_owned = bus_initialized_here;
     sdmmc_card_print_info(stdout, card);
 #else
-    if (s_test_faults.fail_spi_bus && cfg->manage_spi_bus) {
-        s_ctx.stats.status = BB_STORAGE_STATUS_MOUNT_FAILED;
-        s_ctx.stats.last_error = ESP_FAIL;
-        return ESP_FAIL;
+    if (cfg->manage_spi_bus) {
+        s_test_counters.spi_bus_init_calls++;
+        if (s_test_faults.fail_spi_bus) {
+            bb_set_status(BB_STORAGE_STATUS_MOUNT_FAILED);
+            s_ctx.stats.last_error = ESP_FAIL;
+            bb_unlock();
+            return ESP_FAIL;
+        }
+        bus_initialized_here = true;
     }
+
+    s_test_counters.mount_calls++;
     if (s_test_faults.fail_mount) {
-        s_ctx.stats.status = BB_STORAGE_STATUS_MOUNT_FAILED;
+        if (bus_initialized_here) {
+            s_test_counters.spi_bus_free_calls++;
+        }
+        bb_set_status(BB_STORAGE_STATUS_MOUNT_FAILED);
         s_ctx.stats.last_error = ESP_FAIL;
+        bb_unlock();
         return ESP_FAIL;
     }
+
+    {
 #ifdef _WIN32
-    (void)mkdir(cfg->mount_point);
+        DWORD attrs = GetFileAttributesA(cfg->mount_point);
+        if (attrs == INVALID_FILE_ATTRIBUTES) {
+            if (CreateDirectoryA(cfg->mount_point, NULL) || GetLastError() == ERROR_ALREADY_EXISTS) {
+                attrs = GetFileAttributesA(cfg->mount_point);
+            }
+        }
+        if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            BB_LOGE("Host simulated mount dir %s unavailable", cfg->mount_point);
+            if (bus_initialized_here) {
+                s_test_counters.spi_bus_free_calls++;
+            }
+            bb_set_status(BB_STORAGE_STATUS_MOUNT_FAILED);
+            s_ctx.stats.last_error = ESP_FAIL;
+            bb_unlock();
+            return ESP_FAIL;
+        }
 #else
-    (void)mkdir(cfg->mount_point, 0777);
+        struct stat st;
+        int mk_rc = mkdir(cfg->mount_point, 0777);
+        if (mk_rc != 0) {
+            if (errno != EEXIST || stat(cfg->mount_point, &st) != 0 || !S_ISDIR(st.st_mode)) {
+                BB_LOGE("Host simulated mount dir %s unavailable (errno=%d)", cfg->mount_point, errno);
+                if (bus_initialized_here) {
+                    s_test_counters.spi_bus_free_calls++;
+                }
+                bb_set_status(BB_STORAGE_STATUS_MOUNT_FAILED);
+                s_ctx.stats.last_error = ESP_FAIL;
+                bb_unlock();
+                return ESP_FAIL;
+            }
+        }
 #endif
-    s_ctx.spi_bus_owned = cfg->manage_spi_bus;
+    }
+    s_ctx.spi_bus_owned = bus_initialized_here;
 #endif /* BB_STORAGE_HOST_TEST */
 
     s_ctx.config = *cfg;
@@ -631,7 +843,7 @@ esp_err_t bb_storage_init(const bb_storage_config_t *cfg)
     s_ctx.config.mount_point = s_ctx.mount_point;
 
     memset(&s_ctx.stats, 0, sizeof(s_ctx.stats));
-    s_ctx.stats.status = BB_STORAGE_STATUS_READY;
+    bb_set_status(BB_STORAGE_STATUS_READY);
     s_ctx.stats.last_error = ESP_OK;
     s_ctx.initialized = true;
 
@@ -646,10 +858,6 @@ esp_err_t bb_storage_deinit(void)
 {
     esp_err_t err = ESP_OK;
 
-    if (!s_ctx.initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
     bb_lock();
     if (!s_ctx.initialized) {
         bb_unlock();
@@ -660,22 +868,43 @@ esp_err_t bb_storage_deinit(void)
     err = esp_vfs_fat_sdcard_unmount(s_ctx.mount_point, s_ctx.card);
     if (err != ESP_OK) {
         BB_LOGE("esp_vfs_fat_sdcard_unmount failed: 0x%x", (unsigned)err);
+        s_ctx.stats.last_error = err;
+        bb_unlock();
+        return err;
     }
     s_ctx.card = NULL;
+    s_ctx.initialized = false;
+    bb_set_status(BB_STORAGE_STATUS_UNINITIALIZED);
 
     if (s_ctx.spi_bus_owned) {
         esp_err_t bus_err = spi_bus_free(s_ctx.config.host_id);
-        if (bus_err != ESP_OK && err == ESP_OK) {
+        if (bus_err != ESP_OK) {
+            BB_LOGE("spi_bus_free(host=%d) failed: 0x%x", (int)s_ctx.config.host_id, (unsigned)bus_err);
             err = bus_err;
         }
         s_ctx.spi_bus_owned = false;
     }
 #else
-    s_ctx.spi_bus_owned = false;
+    s_test_counters.unmount_calls++;
+    if (s_test_faults.fail_unmount) {
+        s_ctx.stats.last_error = ESP_FAIL;
+        bb_unlock();
+        return ESP_FAIL;
+    }
+    s_ctx.initialized = false;
+    bb_set_status(BB_STORAGE_STATUS_UNINITIALIZED);
+
+    if (s_ctx.spi_bus_owned) {
+        s_test_counters.spi_bus_free_calls++;
+        s_ctx.spi_bus_owned = false;
+        if (s_test_faults.fail_spi_bus_free) {
+            err = ESP_FAIL;
+        }
+    }
 #endif
 
-    s_ctx.initialized = false;
-    s_ctx.stats.status = BB_STORAGE_STATUS_UNINITIALIZED;
+    s_ctx.stats.total_bytes = 0ULL;
+    s_ctx.stats.free_bytes = 0ULL;
     s_ctx.stats.last_error = err;
 
     bb_unlock();
@@ -684,7 +913,7 @@ esp_err_t bb_storage_deinit(void)
 
 bb_storage_status_t bb_storage_get_status(void)
 {
-    return s_ctx.stats.status;
+    return bb_get_status_atomic();
 }
 
 const char *bb_storage_status_to_str(bb_storage_status_t status)
@@ -712,6 +941,8 @@ esp_err_t bb_storage_get_stats(bb_storage_stats_t *out_stats)
     }
 
     bb_lock();
+    s_ctx.stats.total_bytes = 0ULL;
+    s_ctx.stats.free_bytes = 0ULL;
     if (s_ctx.initialized) {
 #ifndef BB_STORAGE_HOST_TEST
         uint64_t total = 0ULL;
@@ -766,10 +997,6 @@ esp_err_t bb_storage_write_event(const bb_event_record_t *event,
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (!s_ctx.initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
     bb_lock();
     if (!s_ctx.initialized) {
         bb_unlock();
@@ -808,7 +1035,7 @@ esp_err_t bb_storage_write_event(const bb_event_record_t *event,
     if (fp == NULL) {
         BB_LOGE("Failed to open temporary file %s (errno=%d)", tmp_path, errno);
         s_ctx.stats.write_failures++;
-        s_ctx.stats.status = (errno == ENOSPC) ? BB_STORAGE_STATUS_FULL : BB_STORAGE_STATUS_WRITE_ERROR;
+        bb_set_status((errno == ENOSPC) ? BB_STORAGE_STATUS_FULL : BB_STORAGE_STATUS_WRITE_ERROR);
         s_ctx.stats.last_error = (errno == ENOSPC) ? ESP_ERR_NO_MEM : ESP_FAIL;
         bb_unlock();
         return s_ctx.stats.last_error;
@@ -921,7 +1148,7 @@ esp_err_t bb_storage_write_event(const bb_event_record_t *event,
     s_ctx.stats.last_event_id = event->event_id;
     s_ctx.stats.last_write_bytes = bytes_written;
     s_ctx.stats.last_error = ESP_OK;
-    s_ctx.stats.status = BB_STORAGE_STATUS_READY;
+    bb_set_status(BB_STORAGE_STATUS_READY);
 
     if (out_final_path != NULL) {
         strcpy(out_final_path, final_path);
@@ -937,7 +1164,7 @@ cleanup_error:
     (void)remove(tmp_path);
     s_ctx.stats.write_failures++;
     s_ctx.stats.last_error = err;
-    s_ctx.stats.status = (err == ESP_ERR_NO_MEM) ? BB_STORAGE_STATUS_FULL : BB_STORAGE_STATUS_WRITE_ERROR;
+    bb_set_status((err == ESP_ERR_NO_MEM) ? BB_STORAGE_STATUS_FULL : BB_STORAGE_STATUS_WRITE_ERROR);
     bb_unlock();
     return err;
 }
@@ -1078,10 +1305,6 @@ esp_err_t bb_storage_list_completed_events(char out_filenames[][BB_STORAGE_MAX_F
         return ESP_ERR_INVALID_ARG;
     }
     *out_count = 0U;
-
-    if (!s_ctx.initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
 
     bb_lock();
     if (!s_ctx.initialized) {

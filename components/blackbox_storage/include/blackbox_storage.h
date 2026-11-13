@@ -48,7 +48,10 @@ typedef int spi_host_device_t;
 #define ESP_ERR_INVALID_CRC       0x109
 
 #define GPIO_NUM_NC              (-1)
+#define SPI1_HOST                 0
 #define SPI2_HOST                 1
+#define SPI3_HOST                 2
+#define SPI_HOST_MAX              3
 #define SDSPI_DEFAULT_HOST        SPI2_HOST
 #define SDMMC_FREQ_DEFAULT        20000
 #endif /* BB_STORAGE_HOST_TEST */
@@ -127,13 +130,22 @@ typedef enum {
  *            board configuration must explicitly assign verified GPIO numbers before
  *            calling `bb_storage_init()`.
  *
+ * @important `mount_point` must start with `'/'`, contain no trailing `'/'`, `'\\'`,
+ *            `..`, whitespace, or control characters, and fit within `ESP_VFS_PATH_MAX` (15 chars)
+ *            on ESP-IDF targets (up to `BB_STORAGE_MAX_MOUNT_PATH_LEN` in host simulation).
+ *
+ * @important When `manage_spi_bus == false` (shared SPI bus with `blackbox_imu_spi`/ADXL345),
+ *            the external SPI bus owner MUST initialize the bus with DMA enabled and
+ *            `max_transfer_sz >= 4000`, and keep all co-resident SPI CS lines de-asserted HIGH
+ *            before calling `bb_storage_init()`.
+ *
  * @important `format_if_mount_failed` MUST remain `false`. To protect user data on
  *            microSD cards, `bb_storage_init()` rejects `format_if_mount_failed == true`
  *            with `ESP_ERR_INVALID_ARG`.
  */
 typedef struct {
-    const char       *mount_point;            /**< VFS mount prefix, e.g. "/sdcard" */
-    spi_host_device_t host_id;                /**< SPI controller (e.g. SPI2_HOST on ESP32-S3) */
+    const char       *mount_point;            /**< VFS mount prefix, e.g. "/sdcard" (<= 15 chars on ESP-IDF) */
+    spi_host_device_t host_id;                /**< SPI controller (`SPI2_HOST` or `SPI3_HOST` on ESP32-S3) */
     gpio_num_t        gpio_mosi;              /**< SPI MOSI pin (required if manage_spi_bus == true) */
     gpio_num_t        gpio_miso;              /**< SPI MISO pin (required if manage_spi_bus == true) */
     gpio_num_t        gpio_sclk;              /**< SPI SCLK pin (required if manage_spi_bus == true) */
@@ -231,9 +243,10 @@ typedef struct {
  * @brief Initialize `blackbox_storage` and mount the FAT-formatted microSD card via SDSPI.
  *
  * Sequence:
- * 1. Validates `cfg` (non-null, valid mount_point, `format_if_mount_failed == false`,
- *    valid `gpio_cs`, and valid `gpio_mosi/miso/sclk` when `manage_spi_bus == true`).
- * 2. Initializes internal mutex for thread-safe serialized storage operations.
+ * 1. Ensures the statically backed internal mutex exists and acquires it safely.
+ * 2. Validates `cfg` (non-null, valid `mount_point`, valid `host_id` `SPI2_HOST`/`SPI3_HOST`,
+ *    `format_if_mount_failed == false`, valid ESP32-S3 `gpio_cs`, and valid/unique
+ *    `gpio_mosi/miso/sclk` when `manage_spi_bus == true`).
  * 3. If `cfg->manage_spi_bus == true`, initializes the SPI bus with `spi_bus_initialize()`.
  * 4. Mounts the microSD FAT partition via `esp_vfs_fat_sdspi_mount()` with `format_if_mount_failed = false`.
  * 5. On mount failure, cleans up any SPI bus it initialized so no resources leak.
@@ -241,7 +254,7 @@ typedef struct {
  * @param[in] cfg Pointer to storage configuration.
  * @return
  *   - `ESP_OK` on successful mount
- *   - `ESP_ERR_INVALID_ARG` if `cfg` is NULL, pins are `GPIO_NUM_NC`, or `format_if_mount_failed` is true
+ *   - `ESP_ERR_INVALID_ARG` if `cfg` is NULL, `host_id`/pins are invalid, or `format_if_mount_failed` is true
  *   - `ESP_ERR_INVALID_STATE` if already initialized
  *   - Other `esp_err_t` codes propagated from `spi_bus_initialize()` or `esp_vfs_fat_sdspi_mount()`
  */
@@ -250,17 +263,23 @@ esp_err_t bb_storage_init(const bb_storage_config_t *cfg);
 /**
  * @brief Unmount the microSD FAT filesystem and release resources owned by `blackbox_storage`.
  *
- * Calls `esp_vfs_fat_sdcard_unmount()`. Calls `spi_bus_free()` ONLY if `manage_spi_bus == true`
- * was configured during `bb_storage_init()`.
+ * Calls `esp_vfs_fat_sdcard_unmount()`. If unmounting fails, storage remains marked
+ * initialized and `spi_bus_free()` is NOT called so ownership is preserved for retry.
+ * Once unmounting succeeds, calls `spi_bus_free()` ONLY if `manage_spi_bus == true`
+ * succeeded during `bb_storage_init()`.
  *
  * @return
  *   - `ESP_OK` on success
  *   - `ESP_ERR_INVALID_STATE` if not currently initialized
+ *   - Error code from `esp_vfs_fat_sdcard_unmount()` or `spi_bus_free()` on failure
  */
 esp_err_t bb_storage_deinit(void);
 
 /**
  * @brief Return the current high-level status of the Storage component.
+ *
+ * Reads status lock-free/atomically so UI and interface polling tasks do not stall
+ * waiting on ongoing microSD writes.
  */
 bb_storage_status_t bb_storage_get_status(void);
 
@@ -451,17 +470,27 @@ esp_err_t bb_storage_self_test(void);
  * @brief Fault-injection hooks available ONLY in host-side unit test builds (`BB_STORAGE_HOST_TEST`).
  */
 typedef struct {
-    bool fail_mount;       /**< Simulate esp_vfs_fat_sdspi_mount failure */
-    bool fail_spi_bus;     /**< Simulate spi_bus_initialize failure */
-    bool fail_write_enospc;/**< Simulate disk full (ENOSPC) mid-write */
-    bool fail_write_io;    /**< Simulate low-level SPI/SD I/O error mid-write */
-    bool fail_rename;      /**< Simulate rename(.TMP -> .CSV) failure */
+    bool fail_mount;        /**< Simulate esp_vfs_fat_sdspi_mount failure */
+    bool fail_spi_bus;      /**< Simulate spi_bus_initialize failure */
+    bool fail_unmount;      /**< Simulate esp_vfs_fat_sdcard_unmount failure */
+    bool fail_spi_bus_free; /**< Simulate spi_bus_free failure */
+    bool fail_write_enospc; /**< Simulate disk full (ENOSPC) mid-write */
+    bool fail_write_io;     /**< Simulate low-level SPI/SD I/O error mid-write */
+    bool fail_rename;       /**< Simulate rename(.TMP -> .CSV) failure */
     uint64_t mock_total_bytes; /**< Simulated card total bytes */
     uint64_t mock_free_bytes;  /**< Simulated card free bytes */
 } bb_storage_test_faults_t;
 
+typedef struct {
+    uint32_t spi_bus_init_calls; /**< Count of simulated spi_bus_initialize() attempts */
+    uint32_t spi_bus_free_calls; /**< Count of simulated spi_bus_free() calls */
+    uint32_t mount_calls;        /**< Count of simulated mount attempts */
+    uint32_t unmount_calls;      /**< Count of simulated unmount attempts */
+} bb_storage_test_counters_t;
+
 void bb_storage_test_set_faults(const bb_storage_test_faults_t *faults);
 void bb_storage_test_reset_faults(void);
+void bb_storage_test_get_counters(bb_storage_test_counters_t *out_counters);
 #endif /* BB_STORAGE_HOST_TEST */
 
 #ifdef __cplusplus
