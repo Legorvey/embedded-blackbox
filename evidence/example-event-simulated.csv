@@ -1,0 +1,14 @@
+# BLACKBOX_EVENT_FORMAT,v1
+# event_id,1
+# trigger_timestamp_us,5020000
+# sample_rate_hz,100
+# flags,0x00000087
+# pre_event_samples,2
+# post_event_samples,1
+# sample_count,4
+sample_idx,timestamp_us,offset_ms,sensor,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_mdps
+0,5000000,-20,1,10,-15,998,100,-30,10
+1,5010000,-10,2,18,-22,1004,0,0,0
+2,5020000,0,1,2940,-510,1250,1450,320,-90
+3,5030000,10,2,410,-95,1015,0,0,0
+# END_EVENT,count=4,crc32=0x90C76B22

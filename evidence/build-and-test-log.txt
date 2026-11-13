@@ -1,0 +1,53 @@
+Command executed:
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\tests\run_tests.ps1"
+
+Timestamp: 2026-11-13T18:30:01+07:00
+Exit code: 0
+
+Verbatim Output:
+============================================================
+ STEP 1: ESP32-S3 Cross-Compilation Check (ESP-IDF v5.4 SDK)
+============================================================
+xtensa-esp-elf-gcc.exe (crosstool-NG esp-14.2.0_20241119) 14.2.0
+
+Name                               Length
+----                               ------
+blackbox_storage_esp32s3.o         100952
+main_esp32s3.o                      14992
+test_blackbox_storage_host_check.o  45852
+
+
+[PASS] ESP32-S3 cross-compilation against ESP-IDF v5.4 headers succeeded with 0 warnings.
+
+============================================================
+ STEP 2: Host Unit & Fault-Injection Test Suite
+============================================================
+============================================================
+ blackbox_storage Host Unit & Fault-Injection Test Suite
+ (NOTE: Uses SYNTHETIC/SIMULATED data on host filesystem)
+============================================================
+[RUN ] test_config_validation
+[E] bb_storage: gpio_cs is not configured (GPIO_NUM_NC). Set verified CS pin before init
+[E] bb_storage: format_if_mount_failed=true is forbidden by safety policy
+[E] bb_storage: Invalid mount_point (must be non-empty, <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must be non-empty, <= 31 chars, no trailing slash)
+[E] bb_storage: Invalid mount_point (must be non-empty, <= 31 chars, no trailing slash)
+[E] bb_storage: Duplicate GPIO pin assignment detected in SPI configuration
+[PASS] test_config_validation
+[RUN ] test_lifecycle_and_mount_failures
+[W] bb_storage: bb_storage_init called while already initialized
+[PASS] test_lifecycle_and_mount_failures
+[RUN ] test_event_input_validation
+[PASS] test_event_input_validation
+[RUN ] test_paths_and_filename_predicate
+[PASS] test_paths_and_filename_predicate
+[RUN ] test_csv_serialization_and_crc32
+[PASS] test_csv_serialization_and_crc32
+[RUN ] test_write_verify_and_corruption_detection
+[W] bb_storage: Finalized event file already exists: ./build_test_sdcard/E0000001.CSV
+[PASS] test_write_verify_and_corruption_detection
+[RUN ] test_fault_injection_and_listing
+[PASS] test_fault_injection_and_listing
+------------------------------------------------------------
+ Summary: 7/7 passed, 0 failed
+============================================================
