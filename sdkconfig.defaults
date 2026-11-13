@@ -4,8 +4,11 @@ CONFIG_IDF_TARGET="esp32s3"
 # FATFS settings for microSD event storage
 # 8.3 filenames (E0000001.CSV) work out of the box even without LFN,
 # but enabling LFN on heap supports longer custom filenames if needed later.
+# FS_LOCK enables concurrent-safe file/rename locking inside FatFs.
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=64
+CONFIG_FATFS_FS_LOCK=16
 
 # FreeRTOS & System diagnostics
 CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
