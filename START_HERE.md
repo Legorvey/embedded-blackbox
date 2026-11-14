@@ -17,6 +17,7 @@
    Perintah ini memverifikasi kompilasi objek target `esp32s3` (`xtensa-esp32s3-elf-gcc` + header ESP-IDF v5.4) serta **8 suite unit, fault-injection, & concurrency test** di host.
 4. **Cek pertanyaan integrasi yang masih terbuka** di [`docs/05-KEPUTUSAN-DAN-PERTANYAAN.md`](docs/05-KEPUTUSAN-DAN-PERTANYAAN.md) sebelum sinkronisasi dengan Core, ADXL345 (`blackbox_imu_spi`), dan Interface.
 5. **Saat presentasi / handoff** ke ketua tim, gunakan rangkuman di [`docs/04-HANDOFF-PRESENTASI.md`](docs/04-HANDOFF-PRESENTASI.md) dan bukti terverifikasi di [`docs/03-PENGUJIAN-DAN-BUKTI.md`](docs/03-PENGUJIAN-DAN-BUKTI.md).
+6. **Sebelum uji hardware fisik & flashing pertama kali**, ikuti seluruh daftar periksa keselamatan 3.3V, pemilihan GPIO, dan skenario uji bertahap di [`docs/07-HARDWARE-BRINGUP-CHECKLIST.md`](docs/07-HARDWARE-BRINGUP-CHECKLIST.md).
 
 ## Alur kerja Git (repo sudah aktif)
 

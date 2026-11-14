@@ -55,7 +55,8 @@ embedded-blackbox-storage-starter/
 │   ├── 03-PENGUJIAN-DAN-BUKTI.md        # Tabel rencana uji dan bukti terverifikasi
 │   ├── 04-HANDOFF-PRESENTASI.md         # Materi handoff untuk presentasi Senin, 16 Nov 2026
 │   ├── 05-KEPUTUSAN-DAN-PERTANYAAN.md   # Log keputusan teknis & daftar konfirmasi tim
-│   └── 06-BELAJAR-STORAGE.md            # Modul belajar lengkap (SPI, SDSPI, FATFS, FreeRTOS)
+│   ├── 06-BELAJAR-STORAGE.md            # Modul belajar lengkap (SPI, SDSPI, FATFS, FreeRTOS)
+│   └── 07-HARDWARE-BRINGUP-CHECKLIST.md # Checklist bring-up fisik ESP32-S3, kelistrikan 3.3V & microSD
 ├── prompts/
 │   └── ANTIGRAVITY-STORAGE-MASTER.md
 └── source_refs/
@@ -100,11 +101,11 @@ idf.py size
 ```
 
 Output link & konfigurasi yang terverifikasi pada **ESP-IDF `v5.4.4`** (target `esp32s3`):
-- Komponen `blackbox_storage` ditemukan dan dikompilasi menjadi `libblackbox_storage.a` (`187.364` B; `0` warnings / `0` errors).
+- Komponen `blackbox_storage` ditemukan dan dikompilasi menjadi `libblackbox_storage.a` (`189.180` B; `0` warnings / `0` errors).
 - `build/bootloader/bootloader.bin` (`20.928` B / `0x51c0` B, `36%` ruang sisa).
 - `build/partition_table/partition-table.bin` (`3.072` B; `nvs` `24K` @ `0x9000`, `phy_init` `4K` @ `0xf000`, `factory` `1M` @ `0x10000`).
-- `build/embedded_blackbox.elf` (`3.804.372` B) dan `build/embedded_blackbox.bin` (`205.056` B / `0x32100` B; `idf.py size` = `204.936` B, tersisa `0xcdf00` B / `80%` di partisi `factory`).
-- *Catatan footprint starter:* karena `main/main.c` menahan `BB_STORAGE_PIN_CS = GPIO_NUM_NC` (`-1`) dan keluar dini sebelum memanggil `bb_storage_init()`, linker *gc-sections* hanya menyertakan `1.186` B dari `libblackbox_storage.a` di ELF starter (ukuran objek terkompilasi penuh `blackbox_storage.c.obj` di ESP-IDF `v5.4.4` adalah `11.335` B `.text`, `8` B `.data`, `208` B `.bss`).
+- `build/embedded_blackbox.elf` (`3.804.892` B) dan `build/embedded_blackbox.bin` (`205.056` B / `0x32100` B; `idf.py size` = `204.936` B, tersisa `0xcdf00` B / `80%` di partisi `factory`).
+- *Catatan footprint starter:* karena `main/main.c` menahan `BB_STORAGE_PIN_CS = GPIO_NUM_NC` (`-1`) dan keluar dini sebelum memanggil `bb_storage_init()`, linker *gc-sections* hanya menyertakan `1.186` B dari `libblackbox_storage.a` di ELF starter (ukuran objek terkompilasi penuh `blackbox_storage.c.obj` di ESP-IDF `v5.4.4` adalah `11.436` B `.text`, `8` B `.data`, `208` B `.bss`).
 
 > **Peringatan Hardware & Konfigurasi Flash Sebelum Flashing:**  
 > 1. Pin GPIO SPI di `main/main.c` dan `BB_STORAGE_CONFIG_DEFAULT()` sengaja disetel ke `GPIO_NUM_NC` (`-1`) karena pinout board ESP32-S3 tim belum dikonfirmasi.  
@@ -118,7 +119,7 @@ Output link & konfigurasi yang terverifikasi pada **ESP-IDF `v5.4.4`** (target `
 |---|---|---|
 | 1. **Diimplementasikan di kode** | **SELESAI** | `components/blackbox_storage/` (`include/blackbox_storage.h`, `blackbox_storage.c`, `CMakeLists.txt`), `sdkconfig.defaults`, `main/main.c` |
 | 2. **Diujikan secara unit test di host** | **PASS (8/8)** | Lulus **8/8 suites** pada **MinGW GCC 4.9.2 (`-std=gnu11 -Wall -Wextra -Werror`)** & **MATLAB `lcc64`** (termasuk konkurensi 4 thread; data simulasi host) |
-| 3. **Cross-compile objek target `esp32s3`** | **PASS** | `blackbox_storage_esp32s3.o` (`147.728` B), `main_esp32s3.o` (`15.004` B) via `xtensa-esp32s3-elf-gcc` 14.2.0 terhadap SDK ESP-IDF v5.4 (`0 warnings`) |
-| 4. **Full link firmware ESP-IDF (`.elf`/`.bin`)** | **PASS** | `idf.py build` pada **ESP-IDF `v5.4.4`** (`esp32s3`, CMake `3.30.2`, Ninja `1.12.1`) sukses `0 warnings`: `embedded_blackbox.elf` (`3.804.372` B), `embedded_blackbox.bin` (`205.056` B), `bootloader.bin` (`20.928` B), `partition-table.bin` (`3.072` B) |
+| 3. **Cross-compile objek target `esp32s3`** | **PASS** | `blackbox_storage_esp32s3.o` (`148.936` B), `main_esp32s3.o` (`15.004` B) via `xtensa-esp32s3-elf-gcc` 14.2.0 terhadap SDK ESP-IDF v5.4 (`0 warnings`) |
+| 4. **Full link firmware ESP-IDF (`.elf`/`.bin`)** | **PASS** | `idf.py build` pada **ESP-IDF `v5.4.4`** (`esp32s3`, CMake `3.30.2`, Ninja `1.12.1`) sukses `0 warnings`: `embedded_blackbox.elf` (`3.804.892` B), `embedded_blackbox.bin` (`205.056` B), `bootloader.bin` (`20.928` B), `partition-table.bin` (`3.072` B) |
 | 5. **Perilaku hardware fisik microSD** | **UNVERIFIED ON HARDWARE** | Tidak ada board ESP32-S3 terhubung ke port serial, pin GPIO SPI tim masih `GPIO_NUM_NC`, dan spesifikasi flash/board belum dikonfirmasi |
 | 6. **Integrasi komponen tim lainnya** | **INTEGRATION PENDING** | Menunggu komponen Anggota 1 (`imu_i2c`), 2 (`imu_spi`), 4 (`interface`), dan 5 (`core`) |

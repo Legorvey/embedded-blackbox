@@ -99,12 +99,15 @@ if (bb_storage_list_completed_events(NULL, 0, &total_events) == ESP_OK && total_
     char files[32][BB_STORAGE_MAX_FILENAME_LEN];
     size_t count = 0;
     if (bb_storage_list_completed_events(files, 32, &count) == ESP_OK) {
-        /* Membangun path unduhan HTTP: "/sdcard/" + files[i] */
+        /* Wajib validasi filename (cegah traversal / .TMP): */
+        if (bb_storage_is_completed_event_filename(files[i])) {
+            /* Buka "/sdcard/" + files[i] via fopen("rb"), cek ukuran pakai fstat(fileno(fp), &st) */
+        }
     }
 }
 ```
 
-> **Catatan Konkurensi FATFS & VFS (`vfs_fat.c` ESP-IDF v5.4.4):** `sdkconfig.defaults` sudah menyetel `CONFIG_FATFS_FS_LOCK=16` (`FF_FS_REENTRANT=1`). Namun audit kode sumber ESP-IDF `v5.4.4` (`vfs_fat.c`) menunjukkan bahwa cache `dir_path` dan `cached_fileinfo` pada `vfs_fat_opendir()`/`vfs_fat_readdir()`/`vfs_fat_stat()` tidak dilindungi `fat_ctx->lock`, `vfs_fat_read()` juga tidak memegang `fat_ctx->lock`, dan `f_mount(0, ...)` saat `deinit` tidak reentrant. Oleh karena itu: (1) `blackbox_interface` **wajib memakai `bb_storage_list_completed_events()`** dan dilarang memanggil `opendir()`/`stat()` langsung ke `/sdcard` saat writer aktif; (2) semua stream unduhan HTTP wajib ditutup sebelum `bb_storage_deinit()`; (3) file descriptor HTTP ikut berbagi slot `cfg.max_open_files` (default `4`). Jika Interface memerlukan API pembacaan/paginasi terkelola, sepakati sebelum implementasi fase integrasi.
+> **Catatan Konkurensi FATFS, VFS (`vfs_fat.c` ESP-IDF v5.4.4) & `sdkconfig.defaults`:** `sdkconfig.defaults` menyetel `CONFIG_FATFS_FS_LOCK=16` (`FF_FS_REENTRANT=1`) — setelan ini **wajib disalin** ke `sdkconfig.defaults` proyek utama tim. Audit kode sumber ESP-IDF `v5.4.4` (`vfs_fat.c` & `sdspi_host.c`) menunjukkan bahwa cache `dir_path` dan `cached_fileinfo` pada `vfs_fat_opendir()`/`vfs_fat_readdir()`/`vfs_fat_stat()` tidak dilindungi `fat_ctx->lock`, `vfs_fat_read()` juga tidak memegang `fat_ctx->lock`, `f_mount(0, ...)` saat `deinit` tidak reentrant, serta `deinit_slot()` mengembalikan pin `gpio_cs` ke mode input. Oleh karena itu: (1) `blackbox_interface` **wajib memakai `bb_storage_list_completed_events()`** + `bb_storage_is_completed_event_filename()` dan dilarang memanggil `opendir()`/`stat()` langsung ke `/sdcard` saat writer aktif (untuk `Content-Length`, buka dulu `fopen()` lalu gunakan `fstat(fileno(fp), &st)` atau *chunked transfer*); (2) semua stream unduhan HTTP wajib ditutup sebelum `bb_storage_deinit()`; (3) file descriptor HTTP ikut berbagi slot `cfg.max_open_files` (default `4` — sisakan minimal 1 slot untuk writer, maks `<= cfg.max_open_files - 1` stream simultan); (4) `bb_storage_deinit()` selalu membersihkan state & bus yang dimiliki bahkan jika unmount error (tidak ada *retry deinit*); dan (5) siapkan pull-up eksternal `3.3V` pada `SD_CS` bila bus SPI dibagi dengan ADXL345.
 
 ---
 
