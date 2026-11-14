@@ -17,7 +17,7 @@
 3. **Koordinasi Bus SPI (`blackbox_imu_spi` / ADXL345 & `blackbox_storage`):**
    - Jika microSD menggunakan controller SPI terpisah dari ADXL345 (`SPI2_HOST` vs `SPI3_HOST`), set `cfg.manage_spi_bus = true` (default). `blackbox_storage` akan memanggil `spi_bus_initialize()` dan `spi_bus_free()`.
    - Jika microSD dan ADXL345 **berbagi satu bus SPI** (misal `SPI2_HOST`), pemilik bus utama (`blackbox_core`) wajib menginisialisasi bus SPI satu kali dengan **DMA aktif (`SPI_DMA_CH_AUTO`)** dan **`max_transfer_sz >= 4000`**, menahan **seluruh pin CS (SD & ADXL345) tetap HIGH (inaktif)**, lalu memanggil `bb_storage_init()` dengan `cfg.manage_spi_bus = false`.
-   - Pada target ESP-IDF, `cfg.mount_point` harus diawali `'/'` dan panjangnya tidak melebihi `ESP_VFS_PATH_MAX` (`15` karakter, misalnya `"/sdcard"`).
+   - Pada target ESP-IDF `v5.4.4`, `cfg.mount_point` harus diawali `'/'` dan panjangnya tidak melebihi `ESP_VFS_PATH_MAX - 2` (`13` karakter, misalnya `"/sdcard"`), karena `vfs_fat.c` menyalin `base_path` dengan `strlcpy(..., sizeof(base_path) - 1)` (`sizeof == 15`).
 
 ---
 
@@ -93,14 +93,18 @@ err = bb_storage_write_event(&event_record, saved_path, sizeof(saved_path));
 
 /* 2. Daftar file selesai & status cepat di blackbox_interface */
 bb_storage_status_t status = bb_storage_get_status(); /* non-blocking / atomic */
-char files[32][BB_STORAGE_MAX_FILENAME_LEN];
-size_t count = 0;
-if (bb_storage_list_completed_events(files, 32, &count) == ESP_OK) {
-    /* Membangun path unduhan HTTP: "/sdcard/" + files[i] */
+size_t total_events = 0;
+if (bb_storage_list_completed_events(NULL, 0, &total_events) == ESP_OK && total_events > 0) {
+    /* Catatan: urutan mengikuti slot direktori FAT (belum tersortir) dan berhenti di max_files */
+    char files[32][BB_STORAGE_MAX_FILENAME_LEN];
+    size_t count = 0;
+    if (bb_storage_list_completed_events(files, 32, &count) == ESP_OK) {
+        /* Membangun path unduhan HTTP: "/sdcard/" + files[i] */
+    }
 }
 ```
 
-> **Catatan Konkurensi FATFS:** `sdkconfig.defaults` sudah menyetel `CONFIG_FATFS_FS_LOCK=16` agar FatFs VFS aman bila Core dan Interface mengakses VFS dari task terpisah. Namun bila Interface ingin menghindari membaca file selama `bb_storage_write_event` berlangsung, koordinasikan apakah perlu helper pembacaan atau cukup mengandalkan nama `.CSV` yang sudah difinalisasi + `CONFIG_FATFS_FS_LOCK=16`.
+> **Catatan Konkurensi FATFS & VFS (`vfs_fat.c` ESP-IDF v5.4.4):** `sdkconfig.defaults` sudah menyetel `CONFIG_FATFS_FS_LOCK=16` (`FF_FS_REENTRANT=1`). Namun audit kode sumber ESP-IDF `v5.4.4` (`vfs_fat.c`) menunjukkan bahwa cache `dir_path` dan `cached_fileinfo` pada `vfs_fat_opendir()`/`vfs_fat_readdir()`/`vfs_fat_stat()` tidak dilindungi `fat_ctx->lock`, `vfs_fat_read()` juga tidak memegang `fat_ctx->lock`, dan `f_mount(0, ...)` saat `deinit` tidak reentrant. Oleh karena itu: (1) `blackbox_interface` **wajib memakai `bb_storage_list_completed_events()`** dan dilarang memanggil `opendir()`/`stat()` langsung ke `/sdcard` saat writer aktif; (2) semua stream unduhan HTTP wajib ditutup sebelum `bb_storage_deinit()`; (3) file descriptor HTTP ikut berbagi slot `cfg.max_open_files` (default `4`). Jika Interface memerlukan API pembacaan/paginasi terkelola, sepakati sebelum implementasi fase integrasi.
 
 ---
 
@@ -112,6 +116,7 @@ if (bb_storage_list_completed_events(files, 32, &count) == ESP_OK) {
 | 2 | Sumber waktu `timestamp_us` | Monotonik `uint64_t` mikrodetik sejak boot (`esp_timer_get_time()`) + `offset_ms` relatif terhadap trigger | Anggota 5 (Core) |
 | 3 | Batas maksimum sampel per event (`BB_STORAGE_MAX_SAMPLES`) | Dibatasi hingga `2048` sampel per event (cukup untuk 10 detik @ 100 Hz × 2 sensor = 2000 sampel) | Anggota 5 (Core) |
 | 4 | Kebijakan penomoran `event_id` saat reboot | `event_id` dalam rentang `1 .. 0x0FFFFFFF`; file dengan `event_id` yang sudah ada di SD tidak boleh ditimpa (`ESP_ERR_INVALID_STATE`) | Anggota 5 (Core) |
-| 5 | Pembagian bus SPI antara microSD dan ADXL345 | Didukung keduanya melalui flag `cfg.manage_spi_bus` (`true` jika bus terpisah/milik Storage, `false` jika bus dibagi dan di-init oleh Core) | Anggota 2 (ADXL345), Anggota 5 (Core) |
-| 6 | Cara `blackbox_interface` menyajikan daftar & isi file ke HTTP | Memanggil `bb_storage_list_completed_events()` untuk mengambil daftar `E*.CSV`, lalu membaca file `.CSV` dari `/sdcard/` | Anggota 4 (Interface) |
+| 5 | Pembagian bus SPI antara microSD dan ADXL345 | Didukung keduanya melalui flag `cfg.manage_spi_bus` (`true` jika bus terpisah/milik Storage, `false` jika bus dibagi dan di-init oleh Core); perhatikan bahwa transaksi SDSPI menahan lock bus selama polling sibuk kartu | Anggota 2 (ADXL345), Anggota 5 (Core) |
+| 6 | Cara `blackbox_interface` menyajikan daftar, sortir, & isi file ke HTTP | Memanggil `bb_storage_list_completed_events()` (urutan FAT belum tersortir; hitung dulu via `NULL, 0, &total`), tutup stream sebelum `deinit`, dan hindari `opendir()`/`stat()` langsung ke VFS | Anggota 4 (Interface) |
 | 7 | Pin GPIO fisik (`MOSI`, `MISO`, `SCLK`, `CS`) pada board ESP32-S3 | Default disetel ke `GPIO_NUM_NC` (`-1`); wajib diisi setelah board fisik dan skematik wiring disepakati | Seluruh tim |
+| 8 | Spesifikasi Flash, PSRAM, & tabel partisi board ESP32-S3 tim | Starter memakai default ESP-IDF `2MB` flash (`dio`, `80m`), PSRAM off, dan `Single factory app` (`1M`); wajib disesuaikan sebelum flashing & integrasi Wi-Fi/HTTP | Ketua & Anggota 5 (Core) |

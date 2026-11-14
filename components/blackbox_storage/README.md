@@ -41,7 +41,7 @@ components/blackbox_storage/
 
 | Fungsi | Kegunaan | Nilai Balik Utama |
 |---|---|---|
-| `bb_storage_init(cfg)` | Validasi konfigurasi (`host_id`, GPIO ESP32-S3, `ESP_VFS_PATH_MAX` <= 15 char di target), opsional init SPI bus, & mount FATFS | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_STATE`, `ESP_FAIL` |
+| `bb_storage_init(cfg)` | Validasi konfigurasi (`host_id`, GPIO ESP32-S3, `mount_point <= 13` char di ESP-IDF `v5.4.4`), opsional init SPI bus, & mount FATFS | `ESP_OK`, `ESP_ERR_INVALID_ARG`, `ESP_ERR_INVALID_STATE`, `ESP_FAIL` |
 | `bb_storage_deinit()` | Unmount FATFS; menjaga status & kepemilikan bus bila unmount gagal agar bisa retry, lalu bebas bus SPI jika `manage_spi_bus == true` | `ESP_OK`, `ESP_ERR_INVALID_STATE`, `ESP_FAIL` |
 | `bb_storage_get_status()` | Mengambil status saat ini secara *lock-free/atomic* tanpa terblokir I/O SD (`UNINITIALIZED`, `READY`, `MOUNT_FAILED`, `WRITE_ERROR`, `FULL`) | `bb_storage_status_t` |
 | `bb_storage_status_to_str(status)` | Konversi enum `bb_storage_status_t` menjadi teks status | `const char *` |
@@ -89,9 +89,17 @@ sample_idx,timestamp_us,offset_ms,sensor,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_md
 
 ---
 
-## 5. Provenance, Referensi Resmi & Lisensi
+## 5. Status Build & Verifikasi Komponen
 
-Implementasi komponen ini ditulis dari awal sebagai modul C khusus untuk proyek **Embedded Event Black Box** dengan mengacu pada dokumentasi dan pola API resmi Espressif **ESP-IDF v5.4 (`esp32s3`)**:
+- **Full ESP-IDF Build (`esp32s3`, ESP-IDF `v5.4.4`):** **PASS** — ditemukan oleh CMake `3.30.2` / Ninja `1.12.1`, terkompilasi ke `libblackbox_storage.a` (`187.364` B; `0 warnings`) dan ter-*link* penuh menjadi `embedded_blackbox.elf` / `embedded_blackbox.bin` (`205.056` B).
+- **Cross-Compile & Host Regression Tests (`tests/run_tests.ps1`):** **PASS (`8/8`)** pada MinGW GCC `4.9.2` (`-std=gnu11 -Wall -Wextra -Werror`) dan MATLAB `lcc64` (data simulasi pada filesystem host).
+- **Verifikasi Hardware Fisik (microSD + SDSPI):** **UNVERIFIED ON HARDWARE** — pin default tetap `GPIO_NUM_NC` (`-1`) dan belum dijalankan pada board fisik ESP32-S3.
+
+---
+
+## 6. Provenance, Referensi Resmi & Lisensi
+
+Implementasi komponen ini ditulis dari awal sebagai modul C khusus untuk proyek **Embedded Event Black Box** dengan mengacu pada dokumentasi dan pola API resmi Espressif **ESP-IDF v5.4 / v5.4.4 (`esp32s3`)**:
 
 1. **ESP-IDF FATFS VFS API (`esp_vfs_fat.h`)** — Lisensi upstream: Apache-2.0  
    https://docs.espressif.com/projects/esp-idf/en/v5.4/esp32s3/api-reference/storage/fatfs.html
@@ -108,15 +116,15 @@ Implementasi komponen ini ditulis dari awal sebagai modul C khusus untuk proyek 
 - Serialisasi event terstruktur (`bb_storage_format_event_csv`) dengan metadata lengkap dan checksum **CRC-32 IEEE 802.3**.
 - Siklus hidup berkas dua tahap (`.TMP` -> `.CSV`) dan pembersihan berkas `.TMP` otomatis saat terjadi kegagalan tulis (`ENOSPC` / `EIO`).
 - Fungsi verifikasi baca-balik (`bb_storage_verify_event_file`) dan filter daftar file selesai (`bb_storage_list_completed_events`) untuk mencegah `blackbox_interface` membaca file parsial.
-- Dukungan kompilasi ganda (target `esp32s3` ESP-IDF v5.4 dan *host unit testing* dengan *fault injection*).
+- Dukungan kompilasi ganda (target `esp32s3` ESP-IDF v5.4 / v5.4.4 dan *host unit testing* dengan *fault injection*).
 
 ---
 
-## 6. Batasan Teknis (Limitations)
+## 7. Batasan Teknis (Limitations)
 
 1. **Ketahanan Listrik Mati Mendadak (FAT Power-Loss Limitation):**  
    Mekanisme `.TMP` -> `fflush`/`fsync` -> `fclose` -> `rename` ke `.CSV` menjamin bahwa pada operasi normal, `blackbox_interface` tidak akan membaca file yang sedang ditulis. Namun, sistem berkas **FAT16/FAT32 pada microSD bukan journaling filesystem yang tahan mati listrik mendadak**. Jika daya terputus tepat ketika kartu SD sedang menulis sektor FAT/direktori internal, struktur FAT tetap berisiko mengalami korupsi.
 2. **Operasi Sinkron (Blocking I/O):**  
    `bb_storage_write_event()` melakukan operasi I/O SPI yang dapat memakan waktu puluhan hingga ratusan milidetik tergantung latensi kartu microSD. **Jangan pernah memanggil fungsi ini dari ISR atau task akuisisi sensor 100 Hz.** Panggil dari task penyimpanan berprioritas lebih rendah yang menerima snapshot event melalui FreeRTOS Queue.
-3. **Berbagi Bus SPI dengan ADXL345:**  
-   Jika microSD dan ADXL345 berbagi satu bus SPI (`SPI2_HOST`), seluruh pin CS perangkat lain pada bus tersebut wajib ditahan *HIGH* (inaktif) sebelum kartu microSD diinisialisasi ke mode SPI oleh `esp_vfs_fat_sdspi_mount()`. Selain itu, pemilik bus eksternal (`manage_spi_bus = false`) wajib menginisialisasi bus dengan DMA aktif dan `max_transfer_sz >= 4000`, serta menjaga `mount_point` tidak melebihi batas VFS ESP-IDF (`ESP_VFS_PATH_MAX = 15`).
+3. **Berbagi Bus SPI dengan ADXL345 & Akses VFS Konkuren:**  
+   Jika microSD dan ADXL345 berbagi satu bus SPI (`SPI2_HOST`), seluruh pin CS perangkat lain pada bus tersebut wajib ditahan *HIGH* (inaktif) sebelum kartu microSD diinisialisasi ke mode SPI oleh `esp_vfs_fat_sdspi_mount()`. Selain itu, pemilik bus eksternal (`manage_spi_bus = false`) wajib menginisialisasi bus dengan DMA aktif dan `max_transfer_sz >= 4000`, serta menjaga `mount_point` <= `13` karakter (`ESP_VFS_PATH_MAX - 2`, karena `vfs_fat.c` menyalin `base_path` dengan `strlcpy(..., sizeof(base_path) - 1)`). Perlu diperhatikan pula bahwa `sdspi_host` menahan lock bus SPI selama polling sibuk kartu SD dan `vfs_fat.c` menyimpan cache `dir_path`/`cached_fileinfo` non-synchronized, sehingga `blackbox_interface` disarankan memakai `bb_storage_list_completed_events()` daripada `opendir()`/`stat()` langsung dan menutup stream file sebelum `bb_storage_deinit()`.

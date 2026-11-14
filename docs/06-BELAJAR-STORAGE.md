@@ -204,14 +204,24 @@ Mengapa?
 
 ---
 
-## 10. Cara Menjalankan Ulang Pengujian di Laptop Kamu
+## 10. Cara Menjalankan Ulang Pengujian & Build di Laptop Kamu
 
-Kamu bisa menjalankan kembali seluruh pengujian kapan saja lewat terminal PowerShell di VS Code dengan satu perintah:
+Kamu bisa menjalankan kembali seluruh pengujian host kapan saja lewat terminal PowerShell di VS Code dengan satu perintah:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run_tests.ps1
 ```
 
 Apa yang dilakukan perintah itu?
-1. **Step 1 (Cross-Compile Objek ESP32-S3):** Memanggil compiler resmi `xtensa-esp32s3-elf-gcc` (GCC 14.2.0) untuk mengompilasi `blackbox_storage.c` dan `main.c` menggunakan header asli **ESP-IDF v5.4 (`esp32s3`)** dengan aturan super ketat `-Wall -Wextra -Werror` (semua peringatan dianggap error). Hasilnya: **PASS (0 warnings, 0 errors)**. *(Catatan: ini masih kompilasi `.o`; full link `.elf`/`.bin` via `idf.py build` berstatus NOT RUN karena `idf.py` standalone belum terpasang.)*
+1. **Step 1 (Cross-Compile Objek ESP32-S3 Cepat):** Memanggil compiler `xtensa-esp32s3-elf-gcc` (GCC 14.2.0) untuk mengompilasi `blackbox_storage.c` dan `main.c` menggunakan header SDK **ESP-IDF v5.4 (`esp32s3`)** dengan aturan super ketat `-Wall -Wextra -Werror` (semua peringatan dianggap error). Hasilnya: **PASS (0 warnings, 0 errors)**.
 2. **Step 2 (Host Unit, Fault-Injection & Concurrency Tests):** Mengompilasi `blackbox_storage.c` bersama [`tests/test_blackbox_storage_host.c`](../tests/test_blackbox_storage_host.c) menggunakan **MinGW GCC 4.9.2 (`-std=gnu11 -Wall -Wextra -Werror`)** dan **MATLAB `lcc64`**, lalu menjalankan **8 kelompok uji otomatis** (konfigurasi & pin ESP32-S3, lifecycle & unmount gagal, validasi input & overflow, path 8.3, serialisasi CSV + golden CRC `0x10BF5ABE`, deteksi korupsi/overflow CSV/2048 sampel/CRLF, 11 titik injeksi fault & filter direktori, serta stress test konkurensi 4 thread). Hasilnya: **Summary: 8/8 passed, 0 failed** pada kedua compiler host.
+
+Dan sekarang **ESP-IDF `v5.4.4`** penuh sudah terpasang, jadi kamu juga bisa menjalankan full firmware build ESP32-S3 di terminal ESP-IDF `v5.4.4` (atau setelah mengaktifkan profil `Microsoft.v5.4.4.PowerShell_profile.ps1` + CMake `3.30.2`):
+
+```powershell
+idf.py set-target esp32s3
+idf.py build
+idf.py size
+```
+
+Hasil terverifikasi (`2026-11-14`): `idf.py build` selesai penuh (`Project build complete.`) tanpa error/warning dan menghasilkan `build/bootloader/bootloader.bin` (`20.928` B), `build/partition_table/partition-table.bin` (`3.072` B), `build/embedded_blackbox.elf` (`3.804.372` B), dan `build/embedded_blackbox.bin` (`205.056` B; tersisa `80%` di partisi `factory` 1 MB). Ingat: ini membuktikan kompilasi & linking ESP32-S3 sukses, sedangkan **uji hardware microSD fisik tetap berstatus `UNVERIFIED ON HARDWARE`** sampai pin GPIO SPI (`GPIO_NUM_NC`) & spesifikasi board tim dikonfirmasi.

@@ -1,6 +1,6 @@
 # START HERE — Embedded Black Box / Storage
 
-> **Untuk pemilik komponen `blackbox_storage`.** Repositori ini (`https://github.com/Legorvey/embedded-blackbox.git`) sudah berisi implementasi komponen `components/blackbox_storage/`, suite pengujian host/cross-compile di `tests/`, bukti verifikasi di `evidence/`, serta dokumentasi teknis di `docs/`. Tetap jaga kejujuran status pengujian: **jangan mengklaim full `idf.py build` firmware atau pengujian hardware microSD fisik sudah lulus sebelum benar-benar dijalankan.**
+> **Untuk pemilik komponen `blackbox_storage`.** Repositori ini (`https://github.com/Legorvey/embedded-blackbox.git`) sudah berisi implementasi komponen `components/blackbox_storage/`, suite pengujian host/cross-compile di `tests/`, bukti verifikasi di `evidence/`, serta dokumentasi teknis di `docs/`. Firmware telah **lulus full build ESP-IDF `v5.4.4` (`esp32s3`)**, namun tetap jaga kejujuran status pengujian: **jangan mengklaim pengujian hardware microSD fisik sudah lulus sebelum benar-benar dijalankan pada board ESP32-S3 (`UNVERIFIED ON HARDWARE`).**
 
 ## Urutan praktis untuk mempelajari & melanjutkan repo ini
 
