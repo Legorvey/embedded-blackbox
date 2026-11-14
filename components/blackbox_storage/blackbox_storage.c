@@ -141,13 +141,12 @@ static portMUX_TYPE s_mutex_init_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 static void bb_ensure_mutex(void)
 {
+    /* Acquire the mux unconditionally instead of unsynchronized double-checked loading. */
+    portENTER_CRITICAL(&s_mutex_init_spinlock);
     if (s_ctx.mutex == NULL) {
-        portENTER_CRITICAL(&s_mutex_init_spinlock);
-        if (s_ctx.mutex == NULL) {
-            s_ctx.mutex = xSemaphoreCreateMutexStatic(&s_ctx.mutex_buf);
-        }
-        portEXIT_CRITICAL(&s_mutex_init_spinlock);
+        s_ctx.mutex = xSemaphoreCreateMutexStatic(&s_ctx.mutex_buf);
     }
+    portEXIT_CRITICAL(&s_mutex_init_spinlock);
 }
 
 static void bb_lock(void)
@@ -485,8 +484,13 @@ static bool is_valid_mount_point(const char *mount_point)
     }
     len = strlen(mount_point);
 #ifndef BB_STORAGE_HOST_TEST
-    if ((size_t)ESP_VFS_PATH_MAX < max_len) {
-        max_len = (size_t)ESP_VFS_PATH_MAX;
+    /*
+     * ESP-IDF vfs_fat.c copies base_path with strlcpy(..., sizeof(base_path) - 1)
+     * where sizeof(base_path) == ESP_VFS_PATH_MAX (15), truncating paths > 13 chars
+     * and breaking subsequent esp_vfs_fat_info() / esp_vfs_fat_sdcard_unmount() lookups.
+     */
+    if ((size_t)ESP_VFS_PATH_MAX > 2U && ((size_t)ESP_VFS_PATH_MAX - 2U) < max_len) {
+        max_len = (size_t)ESP_VFS_PATH_MAX - 2U;
     }
     if (mount_point[0] != '/') {
         return false;
@@ -1011,10 +1015,11 @@ esp_err_t bb_storage_deinit(void)
     err = esp_vfs_fat_sdcard_unmount(s_ctx.mount_point, s_ctx.card);
     if (err != ESP_OK) {
         BB_LOGE("esp_vfs_fat_sdcard_unmount failed: 0x%x", (unsigned)err);
-        s_ctx.stats.last_error = err;
-        bb_unlock();
-        return err;
     }
+    /*
+     * esp_vfs_fat_sdcard_unmount() frees s_ctx.card before esp_vfs_fat_unregister_path(),
+     * so always clear local card/initialized state and free an owned SPI bus.
+     */
     s_ctx.card = NULL;
     s_ctx.initialized = false;
     bb_set_status(BB_STORAGE_STATUS_UNINITIALIZED);
@@ -1023,7 +1028,9 @@ esp_err_t bb_storage_deinit(void)
         esp_err_t bus_err = spi_bus_free(s_ctx.config.host_id);
         if (bus_err != ESP_OK) {
             BB_LOGE("spi_bus_free(host=%d) failed: 0x%x", (int)s_ctx.config.host_id, (unsigned)bus_err);
-            err = bus_err;
+            if (err == ESP_OK) {
+                err = bus_err;
+            }
         }
         s_ctx.spi_bus_owned = false;
     }
@@ -1676,6 +1683,8 @@ esp_err_t bb_storage_verify_event_file(const char *file_path,
                                        uint32_t expected_event_id,
                                        size_t expected_sample_count)
 {
+    esp_err_t err;
+
     if (file_path == NULL || file_path[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
     }
@@ -1683,7 +1692,11 @@ esp_err_t bb_storage_verify_event_file(const char *file_path,
         expected_sample_count > BB_STORAGE_MAX_SAMPLES) {
         return ESP_ERR_INVALID_ARG;
     }
-    return verify_event_file_locked(file_path, expected_event_id, expected_sample_count);
+
+    bb_lock();
+    err = verify_event_file_locked(file_path, expected_event_id, expected_sample_count);
+    bb_unlock();
+    return err;
 }
 
 esp_err_t bb_storage_list_completed_events(char out_filenames[][BB_STORAGE_MAX_FILENAME_LEN],

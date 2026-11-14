@@ -131,8 +131,10 @@ typedef enum {
  *            calling `bb_storage_init()`.
  *
  * @important `mount_point` must start with `'/'`, contain no trailing `'/'`, `'\\'`,
- *            `..`, whitespace, or control characters, and fit within `ESP_VFS_PATH_MAX` (15 chars)
- *            on ESP-IDF targets (up to `BB_STORAGE_MAX_MOUNT_PATH_LEN` in host simulation).
+ *            `..`, whitespace, or control characters, and fit within
+ *            `ESP_VFS_PATH_MAX - 2` (13 chars on ESP-IDF v5.4.4, because `vfs_fat.c`
+ *            copies `base_path` with `strlcpy(..., sizeof(base_path) - 1)`); up to
+ *            `BB_STORAGE_MAX_MOUNT_PATH_LEN` in host simulation.
  *
  * @important When `manage_spi_bus == false` (shared SPI bus with `blackbox_imu_spi`/ADXL345),
  *            the external SPI bus owner MUST initialize the bus with DMA enabled and
@@ -144,7 +146,7 @@ typedef enum {
  *            with `ESP_ERR_INVALID_ARG`.
  */
 typedef struct {
-    const char       *mount_point;            /**< VFS mount prefix, e.g. "/sdcard" (<= 15 chars on ESP-IDF) */
+    const char       *mount_point;            /**< VFS mount prefix, e.g. "/sdcard" (<= 13 chars on ESP-IDF) */
     spi_host_device_t host_id;                /**< SPI controller (`SPI2_HOST` or `SPI3_HOST` on ESP32-S3) */
     gpio_num_t        gpio_mosi;              /**< SPI MOSI pin (required if manage_spi_bus == true) */
     gpio_num_t        gpio_miso;              /**< SPI MISO pin (required if manage_spi_bus == true) */
@@ -423,6 +425,8 @@ esp_err_t bb_storage_write_event(const bb_event_record_t *event,
  *        metadata headers, column header, sequential sample rows, `# END_EVENT`
  *        completion footer, sample count, and CRC32.
  *
+ * @note Calls acquire the internal module mutex to serialize against concurrent
+ *       writes, directory listings, or `bb_storage_deinit()`.
  * @param[in] file_path             Full path to the `.CSV` file to verify.
  * @param[in] expected_event_id     Expected event ID (`0` to skip ID check, otherwise `1..BB_STORAGE_MAX_EVENT_ID`).
  * @param[in] expected_sample_count Expected sample count (`0` to accept count in footer, otherwise `1..BB_STORAGE_MAX_SAMPLES`).
@@ -442,6 +446,9 @@ esp_err_t bb_storage_verify_event_file(const char *file_path,
  * Automatically filters out directories, incomplete `.TMP` files, or unrelated files
  * so `blackbox_interface` only lists completed recordings.
  *
+ * @note Directory entries are enumerated in unsorted FAT directory order and stop
+ *       once `max_files` entries are collected (`out_count == max_files`, no truncation
+ *       flag). Call with `out_filenames = NULL, max_files = 0` first to query total count.
  * @param[out] out_filenames Array of filename buffers (`char[max_files][BB_STORAGE_MAX_FILENAME_LEN]`).
  *                           May be NULL if caller only wants to count completed files via `out_count`.
  * @param[in]  max_files     Maximum number of filenames to store in `out_filenames`.
