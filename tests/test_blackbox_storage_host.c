@@ -324,7 +324,7 @@ static int test_lifecycle_and_mount_failures(void)
     TEST_ASSERT(bb_storage_get_stats(&stats) == ESP_OK && stats.total_bytes > 0ULL,
                 "mounted stats carry simulated card capacity");
 
-    /* 5. Unmount failure preserves ownership & initialized state so retry succeeds cleanly */
+    /* 5. Unmount failure still releases local initialized state & owned SPI bus (matches ESP-IDF teardown) */
     memset(&faults, 0, sizeof(faults));
     faults.fail_unmount = true;
     faults.mock_total_bytes = 16ULL * 1024ULL * 1024ULL;
@@ -332,22 +332,15 @@ static int test_lifecycle_and_mount_failures(void)
     bb_storage_test_set_faults(&faults);
     TEST_ASSERT(bb_storage_deinit() == ESP_FAIL, "unmount failure propagates ESP_FAIL");
     bb_storage_test_get_counters(&counters);
-    TEST_ASSERT(counters.unmount_calls == 1U && counters.spi_bus_free_calls == 0U,
-                "spi_bus_free must NOT be called when unmount fails");
-    TEST_ASSERT(bb_storage_get_status() == BB_STORAGE_STATUS_READY,
-                "storage remains mounted/initialized after unmount failure");
-
-    /* Clear fault and retry deinit -> frees owned SPI bus & resets capacity stats */
-    faults.fail_unmount = false;
-    bb_storage_test_set_faults(&faults);
-    TEST_ASSERT(bb_storage_deinit() == ESP_OK, "retry deinit succeeds");
-    bb_storage_test_get_counters(&counters);
-    TEST_ASSERT(counters.spi_bus_free_calls == 1U, "retry deinit frees owned SPI bus");
+    TEST_ASSERT(counters.unmount_calls == 1U && counters.spi_bus_free_calls == 1U,
+                "owned SPI bus must be freed even when unmount returns error");
     TEST_ASSERT(bb_storage_get_status() == BB_STORAGE_STATUS_UNINITIALIZED,
-                "status is UNINITIALIZED after deinit");
+                "status transitions cleanly to UNINITIALIZED after teardown");
     TEST_ASSERT(bb_storage_get_stats(&stats) == ESP_OK &&
                 stats.total_bytes == 0ULL && stats.free_bytes == 0ULL,
-                "deinit clears stale capacity bytes");
+                "deinit clears stale capacity bytes even on unmount error");
+    TEST_ASSERT(bb_storage_deinit() == ESP_ERR_INVALID_STATE,
+                "second deinit after teardown returns INVALID_STATE");
 
     /* 6. spi_bus_free failure after successful unmount transitions to uninitialized */
     bb_storage_test_reset_faults();

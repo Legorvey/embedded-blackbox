@@ -473,16 +473,10 @@ uint32_t bb_storage_compute_samples_crc32(const bb_storage_sample_t *samples, si
  * Validation & Path Helpers
  * ========================================================================= */
 
-static bool is_valid_mount_point(const char *mount_point)
+static size_t mount_point_max_len(void)
 {
-    size_t len;
-    size_t i;
     size_t max_len = BB_STORAGE_MAX_MOUNT_PATH_LEN;
 
-    if (mount_point == NULL) {
-        return false;
-    }
-    len = strlen(mount_point);
 #ifndef BB_STORAGE_HOST_TEST
     /*
      * ESP-IDF vfs_fat.c copies base_path with strlcpy(..., sizeof(base_path) - 1)
@@ -492,6 +486,21 @@ static bool is_valid_mount_point(const char *mount_point)
     if ((size_t)ESP_VFS_PATH_MAX > 2U && ((size_t)ESP_VFS_PATH_MAX - 2U) < max_len) {
         max_len = (size_t)ESP_VFS_PATH_MAX - 2U;
     }
+#endif
+    return max_len;
+}
+
+static bool is_valid_mount_point(const char *mount_point)
+{
+    size_t len;
+    size_t i;
+    const size_t max_len = mount_point_max_len();
+
+    if (mount_point == NULL) {
+        return false;
+    }
+    len = strlen(mount_point);
+#ifndef BB_STORAGE_HOST_TEST
     if (mount_point[0] != '/') {
         return false;
     }
@@ -545,7 +554,7 @@ static esp_err_t validate_config(const bb_storage_config_t *cfg)
     }
     if (!is_valid_mount_point(cfg->mount_point)) {
         BB_LOGE("Invalid mount_point (must start with '/', <= %u chars, no trailing slash)",
-                (unsigned)BB_STORAGE_MAX_MOUNT_PATH_LEN);
+                (unsigned)mount_point_max_len());
         return ESP_ERR_INVALID_ARG;
     }
     if (cfg->host_id < SPI2_HOST || cfg->host_id >= SPI_HOST_MAX) {
@@ -657,17 +666,25 @@ esp_err_t bb_storage_build_event_paths(const char *mount_point,
     needed_len = mount_len + 14U;
 
     if (out_tmp_path != NULL) {
+        int written;
         if (tmp_size < needed_len) {
             return ESP_ERR_INVALID_SIZE;
         }
-        sprintf(out_tmp_path, "%s/E%07lX.TMP", mount_point, (unsigned long)event_id);
+        written = snprintf(out_tmp_path, tmp_size, "%s/E%07lX.TMP", mount_point, (unsigned long)event_id);
+        if (written < 0 || (size_t)written >= tmp_size) {
+            return ESP_ERR_INVALID_SIZE;
+        }
     }
 
     if (out_final_path != NULL) {
+        int written;
         if (final_size < needed_len) {
             return ESP_ERR_INVALID_SIZE;
         }
-        sprintf(out_final_path, "%s/E%07lX.CSV", mount_point, (unsigned long)event_id);
+        written = snprintf(out_final_path, final_size, "%s/E%07lX.CSV", mount_point, (unsigned long)event_id);
+        if (written < 0 || (size_t)written >= final_size) {
+            return ESP_ERR_INVALID_SIZE;
+        }
     }
 
     return ESP_OK;
@@ -922,6 +939,9 @@ esp_err_t bb_storage_init(const bb_storage_config_t *cfg)
 
     s_ctx.card = card;
     s_ctx.spi_bus_owned = bus_initialized_here;
+#if !defined(CONFIG_FATFS_FS_LOCK) || (CONFIG_FATFS_FS_LOCK < 1)
+    BB_LOGW("CONFIG_FATFS_FS_LOCK is disabled; set CONFIG_FATFS_FS_LOCK=16 in sdkconfig.defaults for concurrent FATFS access");
+#endif
     sdmmc_card_print_info(stdout, card);
 #else
     if (cfg->manage_spi_bus) {
@@ -1037,17 +1057,16 @@ esp_err_t bb_storage_deinit(void)
 #else
     s_test_counters.unmount_calls++;
     if (s_test_faults.fail_unmount) {
-        s_ctx.stats.last_error = ESP_FAIL;
-        bb_unlock();
-        return ESP_FAIL;
+        err = ESP_FAIL;
     }
+    /* Match target ESP-IDF teardown: always clear local initialized state and release owned SPI bus. */
     s_ctx.initialized = false;
     bb_set_status(BB_STORAGE_STATUS_UNINITIALIZED);
 
     if (s_ctx.spi_bus_owned) {
         s_test_counters.spi_bus_free_calls++;
         s_ctx.spi_bus_owned = false;
-        if (s_test_faults.fail_spi_bus_free) {
+        if (s_test_faults.fail_spi_bus_free && err == ESP_OK) {
             err = ESP_FAIL;
         }
     }

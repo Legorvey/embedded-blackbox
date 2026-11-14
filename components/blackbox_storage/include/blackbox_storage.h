@@ -265,15 +265,18 @@ esp_err_t bb_storage_init(const bb_storage_config_t *cfg);
 /**
  * @brief Unmount the microSD FAT filesystem and release resources owned by `blackbox_storage`.
  *
- * Calls `esp_vfs_fat_sdcard_unmount()`. If unmounting fails, storage remains marked
- * initialized and `spi_bus_free()` is NOT called so ownership is preserved for retry.
- * Once unmounting succeeds, calls `spi_bus_free()` ONLY if `manage_spi_bus == true`
+ * Calls `esp_vfs_fat_sdcard_unmount()`. In ESP-IDF v5.4.4, `esp_vfs_fat_sdcard_unmount()`
+ * releases the internal card/VFS allocations even if unregistration returns an error, so
+ * this function always clears internal initialization state (`BB_STORAGE_STATUS_UNINITIALIZED`),
+ * resets capacity stats to zero, and calls `spi_bus_free()` whenever `manage_spi_bus == true`
  * succeeded during `bb_storage_init()`.
  *
+ * @warning Close all open `FILE *` streams on the mount point (including HTTP download handles
+ *          in `blackbox_interface`) before calling `bb_storage_deinit()`.
  * @return
  *   - `ESP_OK` on success
  *   - `ESP_ERR_INVALID_STATE` if not currently initialized
- *   - Error code from `esp_vfs_fat_sdcard_unmount()` or `spi_bus_free()` on failure
+ *   - Error code from `esp_vfs_fat_sdcard_unmount()` (or `spi_bus_free()` if unmount succeeded)
  */
 esp_err_t bb_storage_deinit(void);
 
