@@ -1,26 +1,40 @@
 # ESP-IDF generated build artifacts
 /build/
-/build_test_host/
-/build_test_sdcard/
+/build_test_*/
 /sdkconfig
 /sdkconfig.old
+/sdkconfig.ci
 /managed_components/
 /dependencies.lock.bak
-# Host test binaries and object files
+# Host test binaries, libraries, and object files
 *.obj
 *.o
+*.a
+*.d
 *.exe
-# User/editor-specific artifacts
-.vscode/*.log
+compile_commands.json
+# User/editor-specific and Python environment artifacts
+.vscode/
 .idea/
 .DS_Store
 Thumbs.db
 *.pyc
 __pycache__/
-# Never track credentials or personal chat PDFs
+.venv/
+venv/
+# Never track credentials, certificates, office/presentation files, or private chat screenshots
 .env
 .env.*
 *.pem
 *.key
+*.p12
+*.pfx
+*.crt
 *.pdf
+*.pptx
+*.docx
+*.png
+*.jpg
+*.jpeg
+*.webp
 # keep hand-curated evidence logs only

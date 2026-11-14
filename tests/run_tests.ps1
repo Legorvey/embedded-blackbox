@@ -26,8 +26,16 @@ try {
     Write-Host " STEP 1: ESP32-S3 Cross-Compilation Check (ESP-IDF v5.4 SDK)"
     Write-Host "============================================================"
 
-    $S3Sdk = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esp32-arduino-libs\idf-release_v5.4-2f7dcd86-v1\esp32s3"
-    $XtensaGcc = "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esp-x32\2411\bin\xtensa-esp32s3-elf-gcc.exe"
+    $S3Sdk = if ($env:ESP32_S3_ARDUINO_SDK) {
+        $env:ESP32_S3_ARDUINO_SDK
+    } else {
+        "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esp32-arduino-libs\idf-release_v5.4-2f7dcd86-v1\esp32s3"
+    }
+    $XtensaGcc = if ($env:XTENSA_S3_GCC) {
+        $env:XTENSA_S3_GCC
+    } else {
+        "$env:LOCALAPPDATA\Arduino15\packages\esp32\tools\esp-x32\2411\bin\xtensa-esp32s3-elf-gcc.exe"
+    }
 
     if ((Test-Path $XtensaGcc) -and (Test-Path $S3Sdk)) {
         & $XtensaGcc --version | Select-Object -First 1
@@ -77,13 +85,21 @@ try {
 
     $HostSuitesExecuted = 0
 
-    $MinGwGcc = "C:\Universitas Padjadjaran\Dev-Cpp\MinGW64\bin\gcc.exe"
-    if (-not (Test-Path $MinGwGcc)) {
+    $MinGwGcc = $null
+    if ($env:MINGW_GCC_PATH -and (Test-Path $env:MINGW_GCC_PATH)) {
+        $MinGwGcc = $env:MINGW_GCC_PATH
+    } else {
         $GccCmd = Get-Command gcc.exe -ErrorAction SilentlyContinue
-        if ($GccCmd) { $MinGwGcc = $GccCmd.Source }
+        if ($GccCmd) {
+            $MinGwGcc = $GccCmd.Source
+        } elseif (Test-Path "C:\msys64\mingw64\bin\gcc.exe") {
+            $MinGwGcc = "C:\msys64\mingw64\bin\gcc.exe"
+        } elseif (Test-Path "C:\Universitas Padjadjaran\Dev-Cpp\MinGW64\bin\gcc.exe") {
+            $MinGwGcc = "C:\Universitas Padjadjaran\Dev-Cpp\MinGW64\bin\gcc.exe"
+        }
     }
 
-    if (Test-Path $MinGwGcc) {
+    if ($MinGwGcc -and (Test-Path $MinGwGcc)) {
         Write-Host "[HOST] Running strict C11 build via MinGW GCC..."
         & $MinGwGcc --version | Select-Object -First 1
         & $MinGwGcc -std=gnu11 -Wall -Wextra -Werror `
@@ -104,7 +120,11 @@ try {
         $HostSuitesExecuted++
     }
 
-    $LccDir = "C:\Program Files\MATLAB\R2026a\sys\lcc64\lcc64"
+    $LccDir = if ($env:LCC64_DIR) {
+        $env:LCC64_DIR
+    } else {
+        "C:\Program Files\MATLAB\R2026a\sys\lcc64\lcc64"
+    }
     if (Test-Path "$LccDir\bin\lcc64.exe") {
         Write-Host ""
         Write-Host "[HOST] Running compatibility build via MATLAB lcc64..."

@@ -1,5 +1,5 @@
-=== Embedded Black Box Storage Verification Log ===
-Timestamp: 2026-11-14T09:35:17+07:00
+﻿=== Embedded Black Box Storage Verification Log ===
+Timestamp: 2026-11-14T10:00:42+07:00
 Target: esp32s3 (ESP32-S3)
 Note: Physical microSD SPI hardware tests remain UNVERIFIED ON HARDWARE (GPIO pins = GPIO_NUM_NC).
 
@@ -11,9 +11,9 @@ xtensa-esp-elf-gcc.exe (crosstool-NG esp-14.2.0_20241119) 14.2.0
 
 Name                               Length
 ----                               ------
-blackbox_storage_esp32s3.o         147728
+blackbox_storage_esp32s3.o         148936
 main_esp32s3.o                      15004
-test_blackbox_storage_host_check.o  81616
+test_blackbox_storage_host_check.o  80988
 
 
 [PASS] ESP32-S3 cross-compilation against ESP-IDF v5.4 headers succeeded with 0 warnings.
@@ -137,16 +137,16 @@ Compiler: xtensa-esp-elf-gcc.exe (crosstool-NG esp-14.2.0_20260121) 14.2.0
 
 $ idf.py build
 Executing action: all (aliases: build)
-Running ninja in directory 'C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build'
+Running ninja in directory '<PROJECT_ROOT>\build'
 Executing "ninja all"...
-[1/4] C:\WINDOWS\system32\cmd.exe /C "cd /D "C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build\esp-idf\esptool_py" && C:\Espressif\tools\python\v5.4.4\venv\Scripts\python.exe C:/Espressif/v5.4.4/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app "C:/Codes/UNIVERSITY PROJECTS (UNPAD)/Sistem Tertanam/Black Box/embedded-blackbox-storage-starter/build/partition_table/partition-table.bin" "C:/Codes/UNIVERSITY PROJECTS (UNPAD)/Sistem Tertanam/Black Box/embedded-blackbox-storage-starter/build/embedded_blackbox.bin""
+[1/4] C:\WINDOWS\system32\cmd.exe /C "cd /D "<PROJECT_ROOT>\build\esp-idf\esptool_py" && C:\Espressif\tools\python\v5.4.4\venv\Scripts\python.exe C:/Espressif/v5.4.4/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app "<PROJECT_ROOT>/build/partition_table/partition-table.bin" "<PROJECT_ROOT>/build/embedded_blackbox.bin""
 
 embedded_blackbox.bin binary size 0x32100 bytes. Smallest app partition is 0x100000 bytes. 0xcdf00 bytes (80%) free.
 
 
 [2/4] Performing build step for 'bootloader'
 
-[1/1] C:\WINDOWS\system32\cmd.exe /C "cd /D "C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build\bootloader\esp-idf\esptool_py" && C:\Espressif\tools\python\v5.4.4\venv\Scripts\python.exe C:/Espressif/v5.4.4/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 "C:/Codes/UNIVERSITY PROJECTS (UNPAD)/Sistem Tertanam/Black Box/embedded-blackbox-storage-starter/build/bootloader/bootloader.bin""
+[1/1] C:\WINDOWS\system32\cmd.exe /C "cd /D "<PROJECT_ROOT>\build\bootloader\esp-idf\esptool_py" && C:\Espressif\tools\python\v5.4.4\venv\Scripts\python.exe C:/Espressif/v5.4.4/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 "<PROJECT_ROOT>/build/bootloader/bootloader.bin""
 
 Bootloader binary size 0x51c0 bytes. 0x2e40 bytes (36%) free.
 
@@ -164,22 +164,22 @@ or
  idf.py -p PORT flash
 or
  python -m esptool --chip esp32s3 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 2MB --flash_freq 80m 0x0 build\bootloader\bootloader.bin 0x8000 build\partition_table\partition-table.bin 0x10000 build\embedded_blackbox.bin
-or from the "C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build" directory
+or from the "<PROJECT_ROOT>\build" directory
  python -m esptool --chip esp32s3 -b 460800 --before default_reset --after hard_reset write_flash "@flash_args"
 [idf.py build exit code: 0]
 
 $ idf.py size
 Executing action: size
-Running ninja in directory 'C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build'
+Running ninja in directory '<PROJECT_ROOT>\build'
 Executing "ninja all"...
-[1/4] C:\WINDOWS\system32\cmd.exe /C "cd /D "C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build\esp-idf\esptool_py" && C:\Espressif\tools\python\v5.4.4\venv\Scripts\python.exe C:/Espressif/v5.4.4/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app "C:/Codes/UNIVERSITY PROJECTS (UNPAD)/Sistem Tertanam/Black Box/embedded-blackbox-storage-starter/build/partition_table/partition-table.bin" "C:/Codes/UNIVERSITY PROJECTS (UNPAD)/Sistem Tertanam/Black Box/embedded-blackbox-storage-starter/build/embedded_blackbox.bin""
+[1/4] C:\WINDOWS\system32\cmd.exe /C "cd /D "<PROJECT_ROOT>\build\esp-idf\esptool_py" && C:\Espressif\tools\python\v5.4.4\venv\Scripts\python.exe C:/Espressif/v5.4.4/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app "<PROJECT_ROOT>/build/partition_table/partition-table.bin" "<PROJECT_ROOT>/build/embedded_blackbox.bin""
 
 embedded_blackbox.bin binary size 0x32100 bytes. Smallest app partition is 0x100000 bytes. 0xcdf00 bytes (80%) free.
 
 
 [2/4] Performing build step for 'bootloader'
 
-[1/1] C:\WINDOWS\system32\cmd.exe /C "cd /D "C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build\bootloader\esp-idf\esptool_py" && C:\Espressif\tools\python\v5.4.4\venv\Scripts\python.exe C:/Espressif/v5.4.4/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 "C:/Codes/UNIVERSITY PROJECTS (UNPAD)/Sistem Tertanam/Black Box/embedded-blackbox-storage-starter/build/bootloader/bootloader.bin""
+[1/1] C:\WINDOWS\system32\cmd.exe /C "cd /D "<PROJECT_ROOT>\build\bootloader\esp-idf\esptool_py" && C:\Espressif\tools\python\v5.4.4\venv\Scripts\python.exe C:/Espressif/v5.4.4/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 "<PROJECT_ROOT>/build/bootloader/bootloader.bin""
 
 Bootloader binary size 0x51c0 bytes. 0x2e40 bytes (36%) free.
 
@@ -189,9 +189,9 @@ Bootloader binary size 0x51c0 bytes. 0x2e40 bytes (36%) free.
 
 [4/4] Completed 'bootloader'
 
-Running ninja in directory 'C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build'
+Running ninja in directory '<PROJECT_ROOT>\build'
 Executing "ninja size"...
-[0/1] C:\WINDOWS\system32\cmd.exe /C "cd /D "C:\Codes\UNIVERSITY PROJECTS (UNPAD)\Sistem Tertanam\Black Box\embedded-blackbox-storage-starter\build" && C:\Espressif\tools\cmake\3.30.2\cmake-3.30.2-windows-x86_64\bin\cmake.exe -D IDF_SIZE_TOOL=C:/Espressif/tools/python/v5.4.4/venv/Scripts/python.exe;-m;esp_idf_size -D "MAP_FILE=C:/Codes/UNIVERSITY PROJECTS (UNPAD)/Sistem Tertanam/Black Box/embedded-blackbox-storage-starter/build/embedded_blackbox.map" -D OUTPUT_JSON= -P C:/Espressif/v5.4.4/esp-idf/tools/cmake/run_size_tool.cmake"
+[0/1] C:\WINDOWS\system32\cmd.exe /C "cd /D "<PROJECT_ROOT>\build" && C:\Espressif\tools\cmake\3.30.2\cmake-3.30.2-windows-x86_64\bin\cmake.exe -D IDF_SIZE_TOOL=C:/Espressif/tools/python/v5.4.4/venv/Scripts/python.exe;-m;esp_idf_size -D "MAP_FILE=<PROJECT_ROOT>/build/embedded_blackbox.map" -D OUTPUT_JSON= -P C:/Espressif/v5.4.4/esp-idf/tools/cmake/run_size_tool.cmake"
 
                             Memory Type Usage Summary                             
 
@@ -236,8 +236,9 @@ Executing "ninja size"...
 └─────────────────────┴──────────────┴──────────┴────────────────┴───────────────┘
 
 Total image size: 204936 bytes (.bin may be padded larger)
-
+System.Management.Automation.RemoteException
 Note: The reported total sizes may be smaller than those in the technical reference manual due to reserved memory and application configuration. The total flash size available for the application is not included by default, as it cannot be reliably determined due to the presence of other data like the bootloader, partition table, and application partition size.
+System.Management.Automation.RemoteException
 
 $ gen_esp32part.py build\partition_table\partition-table.bin
 Parsing binary partition input...
@@ -249,17 +250,18 @@ phy_init,data,phy,0xf000,4K,
 factory,app,factory,0x10000,1M,
 
 $ xtensa-esp32s3-elf-size build\esp-idf\blackbox_storage\CMakeFiles\__idf_blackbox_storage.dir\blackbox_storage.c.obj
-text	   data	    bss	    dec	    hex	filename
-  11335	      8	    208	  11551	   2d1f	build\esp-idf\blackbox_storage\CMakeFiles\__idf_blackbox_storage.dir\blackbox_storage.c.obj
+   text	   data	    bss	    dec	    hex	filename
+  11436	      8	    208	  11652	   2d84	build\esp-idf\blackbox_storage\CMakeFiles\__idf_blackbox_storage.dir\blackbox_storage.c.obj
 
 $ Artifacts (bytes)
+
 Name                    Length
 ----                    ------
-embedded_blackbox.elf  3804372
+embedded_blackbox.elf  3804892
 embedded_blackbox.bin   205056
-embedded_blackbox.map  3518615
+embedded_blackbox.map  3518631
 bootloader.bin           20928
 partition-table.bin       3072
-libblackbox_storage.a   187364
-blackbox_storage.c.obj  186728
+libblackbox_storage.a   189180
+blackbox_storage.c.obj  188544
 libmain.a                15898
