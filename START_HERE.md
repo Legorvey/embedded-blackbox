@@ -1,6 +1,8 @@
 # START HERE — Embedded Black Box / Storage
 
 > **Untuk pemilik komponen `blackbox_storage`.** Repositori ini (`https://github.com/Legorvey/embedded-blackbox.git`) sudah berisi implementasi komponen `components/blackbox_storage/`, suite pengujian host/cross-compile di `tests/`, bukti verifikasi di `evidence/`, serta dokumentasi teknis di `docs/`. Firmware telah **lulus full build ESP-IDF `v5.4.4` (`esp32s3`)**, namun tetap jaga kejujuran status pengujian: **jangan mengklaim pengujian hardware microSD fisik sudah lulus sebelum benar-benar dijalankan pada board ESP32-S3 (`UNVERIFIED ON HARDWARE`).**
+>
+> **Jika kamu rekan tim (`Core`, `ADXL345 SPI`, `MPU6050 I2C`, `Interface`, atau Ketua Tim):** mulai dari [**`TEAM_HANDOFF.md`**](TEAM_HANDOFF.md) sebagai titik masuk utama onboarding dan serah terima tim.
 
 ## Urutan praktis untuk mempelajari & melanjutkan repo ini
 
@@ -16,7 +18,7 @@
    ```
    Perintah ini memverifikasi kompilasi objek target `esp32s3` (`xtensa-esp32s3-elf-gcc` + header ESP-IDF v5.4) serta **8 suite unit, fault-injection, & concurrency test** di host.
 4. **Cek pertanyaan integrasi yang masih terbuka** di [`docs/05-KEPUTUSAN-DAN-PERTANYAAN.md`](docs/05-KEPUTUSAN-DAN-PERTANYAAN.md) sebelum sinkronisasi dengan Core, ADXL345 (`blackbox_imu_spi`), dan Interface.
-5. **Saat presentasi / handoff** ke ketua tim, gunakan rangkuman di [`docs/04-HANDOFF-PRESENTASI.md`](docs/04-HANDOFF-PRESENTASI.md) dan bukti terverifikasi di [`docs/03-PENGUJIAN-DAN-BUKTI.md`](docs/03-PENGUJIAN-DAN-BUKTI.md).
+5. **Saat serah terima / presentasi** ke tim, arahkan anggota tim ke pintu masuk utama [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md), serta gunakan naskah & detail integrasi di [`docs/04-HANDOFF-PRESENTASI.md`](docs/04-HANDOFF-PRESENTASI.md) dan bukti terverifikasi di [`docs/03-PENGUJIAN-DAN-BUKTI.md`](docs/03-PENGUJIAN-DAN-BUKTI.md).
 6. **Sebelum uji hardware fisik & flashing pertama kali**, ikuti seluruh daftar periksa keselamatan 3.3V, pemilihan GPIO, dan skenario uji bertahap di [`docs/07-HARDWARE-BRINGUP-CHECKLIST.md`](docs/07-HARDWARE-BRINGUP-CHECKLIST.md).
 
 ## Alur kerja Git (repo sudah aktif)

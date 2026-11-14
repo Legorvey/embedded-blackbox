@@ -15,9 +15,12 @@
 
 <p align="center"><em>Proyek kelompok mata kuliah <strong>Sistem Tertanam (Embedded Systems)</strong> untuk merekam data gerak berbasis pemicu (pre-event &amp; post-event) ke kartu microSD dengan integritas berkas terverifikasi CRC-32.</em></p>
 
-[Status Proyek](#status-proyek) · [Arsitektur](#arsitektur-sistem) · [Bedah `blackbox_storage`](#bedah-komponen-blackbox_storage) · [API & Integrasi](#api-publik-dan-panduan-integrasi) · [Setup & Build](#memulai-di-windows-dengan-esp-idf-v544) · [Pengujian](#pengujian-dan-bukti-verifikasi) · [Dokumentasi](#dokumentasi-dan-sumber-belajar)
+[Team Handoff (`TEAM_HANDOFF.md`)](TEAM_HANDOFF.md) · [Status Proyek](#status-proyek) · [Arsitektur](#arsitektur-sistem) · [Bedah `blackbox_storage`](#bedah-komponen-blackbox_storage) · [API & Integrasi](#api-publik-dan-panduan-integrasi) · [Setup & Build](#memulai-di-windows-dengan-esp-idf-v544) · [Pengujian](#pengujian-dan-bukti-verifikasi) · [Dokumentasi](#dokumentasi-dan-sumber-belajar)
 
 </div>
+
+> **Anggota Tim / Integrator (`Core`, `ADXL345`, `Interface`, atau Ketua Tim)?**  
+> Mulai dari [**`TEAM_HANDOFF.md`**](TEAM_HANDOFF.md) — pintu masuk utama serah terima komponen `blackbox_storage` yang merangkum apa yang sudah selesai, status verifikasi vs `UNVERIFIED ON HARDWARE`, file sumber yang perlu disalin, peta bacaan per peran, syarat integrasi antar-modul, dan langkah lanjutan tim.
 
 > **Catatan Penting Ruang Lingkup & Keselamatan:**  
 > 1. Proyek ini adalah **prototipe pembelajaran akademis**, bukan perekam kecelakaan kendaraan tersertifikasi keselamatan (*safety-certified crash recorder*).  
@@ -429,6 +432,7 @@ embedded-blackbox-storage-starter/
 ├── CMakeLists.txt                        # Root proyek ESP-IDF (embedded_blackbox)
 ├── README.md                             # Dokumentasi utama proyek (berkas ini)
 ├── START_HERE.md                         # Panduan orientasi cepat pengembang Storage
+├── TEAM_HANDOFF.md                       # Pintu masuk utama onboarding & serah terima untuk tim
 ├── sdkconfig.defaults                    # Konfigurasi default target esp32s3, FATFS_FS_LOCK=16, stack 6144
 ├── main/
 │   ├── CMakeLists.txt                    # Registrasi komponen main (REQUIRES blackbox_storage)
@@ -510,6 +514,7 @@ embedded-blackbox-storage-starter/
 
 | Dokumen | Sasaran Pembaca | Ringkasan Isi |
 |---|---|---|
+| [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) | **Seluruh anggota tim** (`Core`, `SPI`, `Interface`, Ketua) | **Pintu masuk utama serah terima:** status, file integrasi, peta bacaan per peran, syarat modul, & langkah lanjutan |
 | [`START_HERE.md`](START_HERE.md) | Pemilik komponen & kontributor baru | Urutan langkah mempelajari repositori & aturan Git lokal |
 | [`docs/06-BELAJAR-STORAGE.md`](docs/06-BELAJAR-STORAGE.md) | **Pemula / Presentasi Mahasiswa** | Penjelasan ramah pemula: SPI, SDSPI, FATFS, VFS, `.TMP -> .CSV`, & FreeRTOS |
 | [`components/blackbox_storage/README.md`](components/blackbox_storage/README.md) | Pengembang komponen | Ringkasan API publik, skema CSV `v1`, provenance upstream, & batasan teknis |
